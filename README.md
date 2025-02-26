@@ -20,7 +20,9 @@ Add `rx_storage_utils` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  rx_storage_utils: ^1.0.0
+  rx_storage_utils:
+    git:
+      url: https://github.com/imjaya03/rx_storage_utils.git
 ```
 
 Then run:
@@ -342,4 +344,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
 # rx_storage_utils
