@@ -232,96 +232,39 @@ class StorageUtils {
   }
 
   //--------------------------------------------------------------------------
-  // BASIC STORAGE OPERATIONS
+  // BASIC STORAGE OPERATIONS - INSTANCE METHODS
   //--------------------------------------------------------------------------
 
-  /// Read data from storage by key
-  ///
-  /// * [key]: The identifier to retrieve the data
-  /// * Returns: The stored data, or null if not found
+  /// Read data from storage by key (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.read(key)`
+  @Deprecated('Use StorageUtils.read(key) for static access')
   Future<dynamic> readFromStorage(String key) async {
-    await _ensureConfigured();
-
-    try {
-      final value = await storage.read(key);
-      if (value == null) return null;
-
-      // Handle decryption if needed
-      if (_enableEncryption &&
-          value is String &&
-          value.startsWith('ENCRYPTED:')) {
-        final decrypted =
-            _decrypt(value.substring(10)); // Remove the 'ENCRYPTED:' prefix
-
-        // Try to parse as JSON if it's a string that looks like JSON
-        if ((decrypted.startsWith('{') || decrypted.startsWith('['))) {
-          try {
-            return json.decode(decrypted);
-          } catch (_) {
-            // If parsing fails, return the raw decrypted string
-            return decrypted;
-          }
-        }
-        return decrypted;
-      }
-
-      // For non-encrypted values, also try to parse JSON strings
-      if (value is String && (value.startsWith('{') || value.startsWith('['))) {
-        try {
-          return json.decode(value);
-        } catch (_) {
-          // If parsing fails, return the raw string
-          return value;
-        }
-      }
-
-      return value;
-    } catch (e) {
-      _log('⚠️ Error reading from storage: $e', isError: true);
-      return null;
-    }
+    return await readFromStorageInternal(key);
   }
 
-  /// Write data to storage with key
-  ///
-  /// * [key]: The identifier for storing the data
-  /// * [data]: The data to store
+  /// Write data to storage with key (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.write(key, data)`
+  @Deprecated('Use StorageUtils.write(key, data) for static access')
   Future<void> writeToStorage(String key, dynamic data) async {
-    await _ensureConfigured();
-
-    try {
-      // Handle encryption if needed
-      final valueToStore = (_enableEncryption && data != null)
-          ? 'ENCRYPTED:${_encrypt(data is String ? data : json.encode(data))}'
-          : data;
-
-      await storage.write(key, valueToStore);
-      _log('📝 Saved data: key=$key');
-    } catch (e) {
-      _log('⚠️ Error writing to storage: $e', isError: true);
-    }
+    return await writeToStorageInternal(key, data);
   }
 
-  /// Delete a value from storage
-  ///
-  /// * [key]: The identifier of the data to remove
+  /// Delete a value from storage (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.remove(key)`
+  @Deprecated('Use StorageUtils.remove(key) for static access')
   Future<void> removeFromStorage(String key) async {
-    try {
-      await storage.remove(key);
-      _log('🗑️ Removed data: key=$key');
-    } catch (e) {
-      _log('⚠️ Error removing from storage: $e', isError: true);
-    }
+    return await removeFromStorageInternal(key);
   }
 
-  /// Clear all stored data
+  /// Clear all stored data (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.clear()`
+  @Deprecated('Use StorageUtils.clear() for static access')
   Future<void> clearStorage() async {
-    try {
-      await storage.erase();
-      _log('🧹 Cleared all storage data');
-    } catch (e) {
-      _log('⚠️ Error clearing storage: $e', isError: true);
-    }
+    return await clearStorageInternal();
   }
 
   //--------------------------------------------------------------------------
@@ -669,67 +612,49 @@ class StorageUtils {
   }
 
   //--------------------------------------------------------------------------
-  // SIMPLE TYPE-SAFE CONVENIENCE METHODS
+  // SIMPLE TYPE-SAFE CONVENIENCE METHODS - INSTANCE METHODS
   //--------------------------------------------------------------------------
 
-  /// Store a simple value (String, int, double, bool)
-  ///
-  /// * [key]: Storage key
-  /// * [value]: Value to store
+  /// Store a simple value (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.set(key, value)`
+  @Deprecated('Use StorageUtils.set(key, value) for static access')
   Future<void> setValue<T>(String key, T value) async {
-    await _ensureConfigured();
-    await writeToStorage(key, value);
+    return await setValueInternal<T>(key, value);
   }
 
-  /// Get a simple value with type safety
-  ///
-  /// * [key]: Storage key
-  /// * Returns: Value of type T, or null if not found
+  /// Get a simple value with type safety (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.get<T>(key)`
+  @Deprecated('Use StorageUtils.get<T>(key) for static access')
   Future<T?> getValue<T>(String key) async {
-    final value = await readFromStorage(key);
-    if (value == null) return null;
-    if (value is T) return value;
-
-    _log('⚠️ Type mismatch for key $key: expected $T, got ${value.runtimeType}',
-        isError: true);
-    return null;
+    return await getValueInternal<T>(key);
   }
 
-  /// Check if a key exists in storage
+  /// Check if a key exists in storage (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.has(key)`
+  @Deprecated('Use StorageUtils.has(key) for static access')
   Future<bool> hasKey(String key) async {
-    return storage.hasData(key);
+    return await hasKeyInternal(key);
   }
 
-  /// Store a value with an expiration time
+  /// Store a value with an expiration time (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.setWithExpiry(key, value, expiration)`
+  @Deprecated(
+      'Use StorageUtils.setWithExpiry(key, value, expiration) for static access')
   Future<void> setValueWithExpiration<T>(
       String key, T value, Duration expiration) async {
-    final expirationTime =
-        DateTime.now().add(expiration).millisecondsSinceEpoch;
-    await writeToStorage('${key}_expiration', expirationTime);
-    await setValue(key, value);
-    _log(
-        '⏱️ Stored value with ${expiration.inMinutes} minute expiration: key=$key');
+    return await setValueWithExpirationInternal<T>(key, value, expiration);
   }
 
-  /// Get a value, respecting expiration if set
-  ///
-  /// Returns null if the value has expired
+  /// Get a value, respecting expiration if set (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.getWithExpiry<T>(key)`
+  @Deprecated('Use StorageUtils.getWithExpiry<T>(key) for static access')
   Future<T?> getValueWithExpiration<T>(String key) async {
-    final expirationKey = '${key}_expiration';
-    if (storage.hasData(expirationKey)) {
-      final expirationTime = await getValue<int>(expirationKey);
-      if (expirationTime != null) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (now > expirationTime) {
-          // Value has expired, remove both value and expiration
-          await removeFromStorage(key);
-          await removeFromStorage(expirationKey);
-          _log('⏱️ Value expired: key=$key');
-          return null;
-        }
-      }
-    }
-    return await getValue<T>(key);
+    return await getValueWithExpirationInternal<T>(key);
   }
 
   //--------------------------------------------------------------------------
@@ -781,77 +706,15 @@ class StorageUtils {
   }
 
   //--------------------------------------------------------------------------
-  // DEBUGGING & INSPECTION
+  // DEBUGGING & INSPECTION - INSTANCE METHODS
   //--------------------------------------------------------------------------
 
-  /// Print all stored values for debugging purposes
-  ///
-  /// This method retrieves and prints all key-value pairs from storage
-  /// Useful for debugging and initial app state inspection
+  /// Print all stored values for debugging purposes (instance method)
+  /// Use the static version for direct access without instantiating:
+  /// `StorageUtils.printAll()`
+  @Deprecated('Use StorageUtils.printAll() for static access')
   Future<void> printAllStoredValues() async {
-    await _ensureConfigured();
-
-    try {
-      // Get all keys from storage
-      final keys = storage.getKeys();
-
-      if (keys.isEmpty) {
-        _log('📦 Storage is empty. No values to print.');
-        return;
-      }
-
-      _log('📦 Storage contains ${keys.length} keys:');
-      _log('======================================');
-
-      // Print each key-value pair
-      for (final key in keys) {
-        // Skip expiration keys for cleaner output
-        if (key.endsWith('_expiration')) continue;
-
-        var value = await readFromStorage(key);
-        String valueType = value?.runtimeType.toString() ?? 'null';
-        String valuePreview;
-
-        if (value == null) {
-          valuePreview = 'null';
-        } else if (value is Map || value is List) {
-          // Format JSON objects for readability
-          valuePreview =
-              '${jsonEncode(value).substring(0, min(50, jsonEncode(value).length))}${jsonEncode(value).length > 50 ? '...' : ''}';
-        } else {
-          valuePreview = '$value';
-          if (valuePreview.length > 50) {
-            valuePreview = '${valuePreview.substring(0, 50)}...';
-          }
-        }
-
-        // Check for expiration
-        final expirationKey = '${key}_expiration';
-        String expirationInfo = '';
-        if (storage.hasData(expirationKey)) {
-          final expiryTimestamp = storage.read(expirationKey) as int?;
-          if (expiryTimestamp != null) {
-            final expiryDate =
-                DateTime.fromMillisecondsSinceEpoch(expiryTimestamp);
-            final now = DateTime.now();
-            if (expiryDate.isAfter(now)) {
-              final remaining = expiryDate.difference(now);
-              expirationInfo = ' (expires in ${_formatDuration(remaining)})';
-            } else {
-              expirationInfo = ' (EXPIRED)';
-            }
-          }
-        }
-
-        _log('🔑 $key:');
-        _log('   Type: $valueType$expirationInfo');
-        _log('   Value: $valuePreview');
-        _log('--------------------------------------');
-      }
-      _log('======================================');
-    } catch (e) {
-      _log('⚠️ Error printing storage values: $e', isError: true);
-    }
+    return await printAllStoredValuesInternal();
   }
 
   /// Format a duration in a human-readable format
@@ -924,6 +787,266 @@ class StorageUtils {
     } catch (e) {
       _log('⚠️ Decryption error: $e', isError: true);
       return text;
+    }
+  }
+
+  //--------------------------------------------------------------------------
+  // STATIC FAÇADE METHODS (DIRECT ACCESS WITHOUT INSTANTIATION)
+  //--------------------------------------------------------------------------
+
+  /// Static method to print all stored values
+  static Future<void> printAll() async {
+    return await _instance.printAllStoredValuesInternal();
+  }
+
+  /// Static method to read values from storage
+  static Future<dynamic> read(String key) async {
+    return await _instance.readFromStorageInternal(key);
+  }
+
+  /// Static method to write values to storage
+  static Future<void> write(String key, dynamic data) async {
+    return await _instance.writeToStorageInternal(key, data);
+  }
+
+  /// Static method to remove values from storage
+  static Future<void> remove(String key) async {
+    return await _instance.removeFromStorageInternal(key);
+  }
+
+  /// Static method to clear storage
+  static Future<void> clear() async {
+    return await _instance.clearStorageInternal();
+  }
+
+  /// Static method to set a value
+  static Future<void> set<T>(String key, T value) async {
+    return await _instance.setValueInternal<T>(key, value);
+  }
+
+  /// Static method to get a value
+  static Future<T?> get<T>(String key) async {
+    return await _instance.getValueInternal<T>(key);
+  }
+
+  /// Static method to check if key exists
+  static Future<bool> has(String key) async {
+    return await _instance.hasKeyInternal(key);
+  }
+
+  /// Static method to set value with expiration
+  static Future<void> setWithExpiry<T>(
+      String key, T value, Duration expiration) async {
+    return await _instance.setValueWithExpirationInternal<T>(
+        key, value, expiration);
+  }
+
+  /// Static method to get value with expiration
+  static Future<T?> getWithExpiry<T>(String key) async {
+    return await _instance.getValueWithExpirationInternal<T>(key);
+  }
+
+  //--------------------------------------------------------------------------
+  // INTERNAL IMPLEMENTATION METHODS
+  //--------------------------------------------------------------------------
+
+  /// Read data from storage by key (internal implementation)
+  Future<dynamic> readFromStorageInternal(String key) async {
+    await _ensureConfigured();
+
+    try {
+      final value = await storage.read(key);
+      if (value == null) return null;
+
+      // Handle decryption if needed
+      if (_enableEncryption &&
+          value is String &&
+          value.startsWith('ENCRYPTED:')) {
+        final decrypted =
+            _decrypt(value.substring(10)); // Remove the 'ENCRYPTED:' prefix
+
+        // Try to parse as JSON if it's a string that looks like JSON
+        if ((decrypted.startsWith('{') || decrypted.startsWith('['))) {
+          try {
+            return json.decode(decrypted);
+          } catch (_) {
+            // If parsing fails, return the raw decrypted string
+            return decrypted;
+          }
+        }
+        return decrypted;
+      }
+
+      // For non-encrypted values, also try to parse JSON strings
+      if (value is String && (value.startsWith('{') || value.startsWith('['))) {
+        try {
+          return json.decode(value);
+        } catch (_) {
+          // If parsing fails, return the raw string
+          return value;
+        }
+      }
+
+      return value;
+    } catch (e) {
+      _log('⚠️ Error reading from storage: $e', isError: true);
+      return null;
+    }
+  }
+
+  /// Write data to storage with key (internal implementation)
+  Future<void> writeToStorageInternal(String key, dynamic data) async {
+    await _ensureConfigured();
+
+    try {
+      // Handle encryption if needed
+      final valueToStore = (_enableEncryption && data != null)
+          ? 'ENCRYPTED:${_encrypt(data is String ? data : json.encode(data))}'
+          : data;
+
+      await storage.write(key, valueToStore);
+      _log('📝 Saved data: key=$key');
+    } catch (e) {
+      _log('⚠️ Error writing to storage: $e', isError: true);
+    }
+  }
+
+  /// Delete a value from storage (internal implementation)
+  Future<void> removeFromStorageInternal(String key) async {
+    try {
+      await storage.remove(key);
+      _log('🗑️ Removed data: key=$key');
+    } catch (e) {
+      _log('⚠️ Error removing from storage: $e', isError: true);
+    }
+  }
+
+  /// Clear all stored data (internal implementation)
+  Future<void> clearStorageInternal() async {
+    try {
+      await storage.erase();
+      _log('🧹 Cleared all storage data');
+    } catch (e) {
+      _log('⚠️ Error clearing storage: $e', isError: true);
+    }
+  }
+
+  /// Store a simple value (String, int, double, bool) (internal implementation)
+  Future<void> setValueInternal<T>(String key, T value) async {
+    await _ensureConfigured();
+    await writeToStorageInternal(key, value);
+  }
+
+  /// Get a simple value with type safety (internal implementation)
+  Future<T?> getValueInternal<T>(String key) async {
+    final value = await readFromStorageInternal(key);
+    if (value == null) return null;
+    if (value is T) return value;
+
+    _log('⚠️ Type mismatch for key $key: expected $T, got ${value.runtimeType}',
+        isError: true);
+    return null;
+  }
+
+  /// Check if a key exists in storage (internal implementation)
+  Future<bool> hasKeyInternal(String key) async {
+    return storage.hasData(key);
+  }
+
+  /// Store a value with an expiration time (internal implementation)
+  Future<void> setValueWithExpirationInternal<T>(
+      String key, T value, Duration expiration) async {
+    final expirationTime =
+        DateTime.now().add(expiration).millisecondsSinceEpoch;
+    await writeToStorageInternal('${key}_expiration', expirationTime);
+    await setValueInternal(key, value);
+    _log(
+        '⏱️ Stored value with ${expiration.inMinutes} minute expiration: key=$key');
+  }
+
+  /// Get a value, respecting expiration if set (internal implementation)
+  Future<T?> getValueWithExpirationInternal<T>(String key) async {
+    final expirationKey = '${key}_expiration';
+    if (storage.hasData(expirationKey)) {
+      final expirationTime = await getValueInternal<int>(expirationKey);
+      if (expirationTime != null) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now > expirationTime) {
+          // Value has expired, remove both value and expiration
+          await removeFromStorageInternal(key);
+          await removeFromStorageInternal(expirationKey);
+          _log('⏱️ Value expired: key=$key');
+          return null;
+        }
+      }
+    }
+    return await getValueInternal<T>(key);
+  }
+
+  /// Print all stored values for debugging purposes (internal implementation)
+  Future<void> printAllStoredValuesInternal() async {
+    await _ensureConfigured();
+
+    try {
+      // Get all keys from storage
+      final keys = storage.getKeys();
+
+      if (keys.isEmpty) {
+        _log('📦 Storage is empty. No values to print.');
+        return;
+      }
+
+      _log('📦 Storage contains ${keys.length} keys:');
+      _log('======================================');
+
+      // Print each key-value pair
+      for (final key in keys) {
+        // Skip expiration keys for cleaner output
+        if (key.endsWith('_expiration')) continue;
+
+        var value = await readFromStorageInternal(key);
+        String valueType = value?.runtimeType.toString() ?? 'null';
+        String valuePreview;
+
+        if (value == null) {
+          valuePreview = 'null';
+        } else if (value is Map || value is List) {
+          // Format JSON objects for readability
+          valuePreview =
+              '${jsonEncode(value).substring(0, min(50, jsonEncode(value).length))}${jsonEncode(value).length > 50 ? '...' : ''}';
+        } else {
+          valuePreview = '$value';
+          if (valuePreview.length > 50) {
+            valuePreview = '${valuePreview.substring(0, 50)}...';
+          }
+        }
+
+        // Check for expiration
+        final expirationKey = '${key}_expiration';
+        String expirationInfo = '';
+        if (storage.hasData(expirationKey)) {
+          final expiryTimestamp = storage.read(expirationKey) as int?;
+          if (expiryTimestamp != null) {
+            final expiryDate =
+                DateTime.fromMillisecondsSinceEpoch(expiryTimestamp);
+            final now = DateTime.now();
+            if (expiryDate.isAfter(now)) {
+              final remaining = expiryDate.difference(now);
+              expirationInfo = ' (expires in ${_formatDuration(remaining)})';
+            } else {
+              expirationInfo = ' (EXPIRED)';
+            }
+          }
+        }
+
+        _log('🔑 $key:');
+        _log('   Type: $valueType$expirationInfo');
+        _log('   Value: $valuePreview');
+        _log('--------------------------------------');
+      }
+      _log('======================================');
+    } catch (e) {
+      _log('⚠️ Error printing storage values: $e', isError: true);
     }
   }
 }
