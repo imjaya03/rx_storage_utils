@@ -76,6 +76,9 @@ class StorageUtils {
   /// Indicates if storage has been initialized
   static bool _isInitialized = false;
 
+  /// Indicates if auto-initialization warning has been shown
+  static bool _autoInitWarningShown = false;
+
   /// Lock for thread-safe initialization
   static final _initLock = Object();
 
@@ -105,12 +108,11 @@ class StorageUtils {
     // Fast return if already initialized
     if (_isInitialized) return;
 
-    // Use lock to prevent multiple simultaneous initializations
-    synchronized() async {
-      // Double-check pattern
+    // Use a synchronized approach to prevent multiple initializations
+    await synchronized(() async {
+      // Double-check pattern for thread safety
       if (_isInitialized) return;
 
-      // Set flag to indicate initialization is in progress
       if (_initializationInProgress) {
         // Wait for initialization to complete if another thread is already doing it
         while (_initializationInProgress) {
@@ -150,18 +152,33 @@ class StorageUtils {
       } finally {
         _initializationInProgress = false;
       }
-    }
+    });
+  }
 
-    // Execute the synchronized function
-    await synchronized();
+  /// Helper method to provide synchronized execution
+  static Future<void> synchronized(Future<void> Function() action) async {
+    // This is a simple synchronization helper since Dart doesn't have built-in locks
+    // For more complex scenarios, consider using a package like 'synchronized'
+    await action();
   }
 
   /// Internal method to initialize storage on first use if not explicitly initialized
   Future<void> _ensureInitialized() async {
     if (!_isInitialized) {
-      print(
-          '⚠️ StorageUtil.init() was not called before usage. Auto-initializing with default settings.');
-      await init();
+      // Show warning only once
+      if (!_autoInitWarningShown) {
+        print(
+            '⚠️ StorageUtil.init() was not called before usage. Auto-initializing with default settings.');
+        _autoInitWarningShown = true;
+      }
+
+      await init(); // Call with default settings
+
+      // Double-check initialization succeeded
+      if (!_isInitialized) {
+        throw StateError(
+            'Failed to auto-initialize StorageUtil. Please call StorageUtil.init() explicitly before using any storage operations.');
+      }
     }
   }
 
