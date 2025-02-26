@@ -59,7 +59,7 @@ class StorageUtils {
   //--------------------------------------------------------------------------
 
   /// The underlying storage instance
-  late final GetStorage _storage;
+  GetStorage? _storage;
 
   /// Whether to show debug logs (default: true in debug mode, false in release)
   bool _enableLogging = kDebugMode;
@@ -75,6 +75,12 @@ class StorageUtils {
 
   /// Indicates if storage has been initialized
   static bool _isInitialized = false;
+
+  /// Lock for thread-safe initialization
+  static final _initLock = Object();
+
+  /// Initialization in progress flag
+  static bool _initializationInProgress = false;
 
   //--------------------------------------------------------------------------
   // INITIALIZATION & CONFIGURATION
@@ -96,33 +102,58 @@ class StorageUtils {
     bool enableEncryption = !kDebugMode,
     String? customEncryptionKey,
   }) async {
+    // Fast return if already initialized
     if (_isInitialized) return;
 
-    try {
-      // Initialize GetStorage
-      await GetStorage.init();
+    // Use lock to prevent multiple simultaneous initializations
+    synchronized() async {
+      // Double-check pattern
+      if (_isInitialized) return;
 
-      // Initialize the singleton instance
-      final instance = StorageUtils();
-
-      // Configure with provided settings
-      instance._storage = GetStorage();
-      instance._enableLogging = enableLogging;
-      instance._enableEncryption = enableEncryption;
-
-      if (customEncryptionKey != null && customEncryptionKey.isNotEmpty) {
-        instance._encryptionKey = customEncryptionKey;
+      // Set flag to indicate initialization is in progress
+      if (_initializationInProgress) {
+        // Wait for initialization to complete if another thread is already doing it
+        while (_initializationInProgress) {
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+        return;
       }
 
-      // Auto-configure securely to generate default encryption key if needed
-      await instance._autoConfigureSecurely();
+      _initializationInProgress = true;
 
-      _isInitialized = true;
-      instance._log('📦 StorageUtil initialized successfully');
-    } catch (e) {
-      print('⚠️ Error initializing StorageUtil: $e');
-      rethrow; // Propagate error to caller since this is a critical initialization
+      try {
+        // Initialize GetStorage
+        await GetStorage.init();
+
+        // Initialize the singleton instance
+        final instance = StorageUtils();
+
+        // Configure with provided settings
+        instance._enableLogging = enableLogging;
+        instance._enableEncryption = enableEncryption;
+
+        if (customEncryptionKey != null && customEncryptionKey.isNotEmpty) {
+          instance._encryptionKey = customEncryptionKey;
+        }
+
+        // Initialize storage only if not already initialized
+        instance._storage ??= GetStorage();
+
+        // Auto-configure securely to generate default encryption key if needed
+        await instance._autoConfigureSecurely();
+
+        _isInitialized = true;
+        instance._log('📦 StorageUtil initialized successfully');
+      } catch (e) {
+        print('⚠️ Error initializing StorageUtil: $e');
+        rethrow; // Propagate error to caller since this is a critical initialization
+      } finally {
+        _initializationInProgress = false;
+      }
     }
+
+    // Execute the synchronized function
+    await synchronized();
   }
 
   /// Internal method to initialize storage on first use if not explicitly initialized
@@ -139,8 +170,6 @@ class StorageUtils {
   Future<void> _initStorage() async {
     try {
       await _ensureInitialized();
-      // Auto-configure with secure defaults
-      await _autoConfigureSecurely();
     } catch (e) {
       _log('⚠️ Error initializing storage: $e', isError: true);
     }
@@ -193,6 +222,15 @@ class StorageUtils {
     }
   }
 
+  /// Get the storage instance safely
+  GetStorage get storage {
+    if (_storage == null) {
+      throw StateError(
+          'Storage not initialized. Call StorageUtil.init() before using storage.');
+    }
+    return _storage!;
+  }
+
   //--------------------------------------------------------------------------
   // BASIC STORAGE OPERATIONS
   //--------------------------------------------------------------------------
@@ -205,7 +243,7 @@ class StorageUtils {
     await _ensureConfigured();
 
     try {
-      final value = await _storage.read(key);
+      final value = await storage.read(key);
       if (value == null) return null;
 
       // Handle decryption if needed
@@ -257,7 +295,7 @@ class StorageUtils {
           ? 'ENCRYPTED:${_encrypt(data is String ? data : json.encode(data))}'
           : data;
 
-      await _storage.write(key, valueToStore);
+      await storage.write(key, valueToStore);
       _log('📝 Saved data: key=$key');
     } catch (e) {
       _log('⚠️ Error writing to storage: $e', isError: true);
@@ -269,7 +307,7 @@ class StorageUtils {
   /// * [key]: The identifier of the data to remove
   Future<void> removeFromStorage(String key) async {
     try {
-      await _storage.remove(key);
+      await storage.remove(key);
       _log('🗑️ Removed data: key=$key');
     } catch (e) {
       _log('⚠️ Error removing from storage: $e', isError: true);
@@ -279,7 +317,7 @@ class StorageUtils {
   /// Clear all stored data
   Future<void> clearStorage() async {
     try {
-      await _storage.erase();
+      await storage.erase();
       _log('🧹 Cleared all storage data');
     } catch (e) {
       _log('⚠️ Error clearing storage: $e', isError: true);
@@ -659,7 +697,7 @@ class StorageUtils {
 
   /// Check if a key exists in storage
   Future<bool> hasKey(String key) async {
-    return _storage.hasData(key);
+    return storage.hasData(key);
   }
 
   /// Store a value with an expiration time
@@ -678,7 +716,7 @@ class StorageUtils {
   /// Returns null if the value has expired
   Future<T?> getValueWithExpiration<T>(String key) async {
     final expirationKey = '${key}_expiration';
-    if (_storage.hasData(expirationKey)) {
+    if (storage.hasData(expirationKey)) {
       final expirationTime = await getValue<int>(expirationKey);
       if (expirationTime != null) {
         final now = DateTime.now().millisecondsSinceEpoch;
@@ -755,7 +793,7 @@ class StorageUtils {
 
     try {
       // Get all keys from storage
-      final keys = _storage.getKeys();
+      final keys = storage.getKeys();
 
       if (keys.isEmpty) {
         _log('📦 Storage is empty. No values to print.');
@@ -790,8 +828,8 @@ class StorageUtils {
         // Check for expiration
         final expirationKey = '${key}_expiration';
         String expirationInfo = '';
-        if (_storage.hasData(expirationKey)) {
-          final expiryTimestamp = _storage.read(expirationKey) as int?;
+        if (storage.hasData(expirationKey)) {
+          final expiryTimestamp = storage.read(expirationKey) as int?;
           if (expiryTimestamp != null) {
             final expiryDate =
                 DateTime.fromMillisecondsSinceEpoch(expiryTimestamp);
