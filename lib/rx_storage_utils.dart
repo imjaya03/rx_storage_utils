@@ -378,8 +378,8 @@ class StorageUtils {
 
           _log('🔄 Loaded initial value from storage: key=$key');
         }
-      } else if (defaultValue != null) {
-        // No stored data but default value provided
+      } else if (defaultValue != null && rxValue.value == null) {
+        // Only use default value if no stored data AND rxValue is null
         rxValue.value = defaultValue;
         _log('ℹ️ No stored data. Using default value for key=$key');
 
@@ -387,6 +387,8 @@ class StorageUtils {
         if (onInitialValue != null) {
           onInitialValue(defaultValue);
         }
+      } else if (rxValue.value != null) {
+        _log('ℹ️ Using existing Rx value (ignoring default): key=$key');
       }
 
       // STEP 2: Set up auto-sync from Rx variable to storage
