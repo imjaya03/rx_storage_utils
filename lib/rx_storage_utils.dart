@@ -442,88 +442,121 @@ class StorageUtils {
 
     try {
       // STEP 1: Load existing list from storage (if any)
-      final storedData = await readFromStorage(key);
+      final storedData = await readFromStorageInternal(key);
+      _log('🔍 Loading list data type: ${storedData?.runtimeType}');
+
+      List<T> loadedList = [];
 
       if (storedData != null) {
-        List<T> loadedList = [];
-
-        // Handle different types of stored data
-        if (storedData is List) {
-          loadedList = storedData.map((item) {
-            // Make sure each item is a Map before conversion
-            if (item is Map<String, dynamic>) {
-              return fromJson(item);
-            } else if (item is String) {
-              // Try to parse string items as JSON
+        try {
+          if (storedData is List) {
+            // Direct list handling - parse each item individually
+            _log('📋 Processing direct list with ${storedData.length} items');
+            for (var i = 0; i < storedData.length; i++) {
               try {
-                final Map<String, dynamic> jsonMap = json.decode(item);
-                return fromJson(jsonMap);
-              } catch (_) {
-                _log('⚠️ Could not parse list item as JSON: $item',
-                    isError: true);
-                throw Exception('Invalid list item format');
+                final item = storedData[i];
+                if (item is Map<String, dynamic>) {
+                  loadedList.add(fromJson(item));
+                } else {
+                  _log('⚠️ Non-map item at index $i: ${item.runtimeType}',
+                      isError: true);
+                }
+              } catch (e) {
+                _log('⚠️ Error parsing item $i: $e', isError: true);
+                // Continue with other items instead of breaking
               }
-            } else {
-              _log('⚠️ Invalid list item type: ${item.runtimeType}',
-                  isError: true);
-              throw Exception('Invalid list item type');
             }
-          }).toList();
-        } else if (storedData is String) {
-          // Try to parse the entire string as a JSON array
-          try {
-            final List<dynamic> jsonList = json.decode(storedData);
-            loadedList = jsonList.map((item) {
-              if (item is Map<String, dynamic>) {
-                return fromJson(item);
-              } else {
-                throw Exception('Invalid item type in JSON list');
+          } else if (storedData is String) {
+            // String handling - attempt to parse as JSON
+            _log('📋 Processing list from string data');
+            try {
+              final decoded = json.decode(storedData);
+              if (decoded is List) {
+                for (var i = 0; i < decoded.length; i++) {
+                  try {
+                    final item = decoded[i];
+                    if (item is Map<String, dynamic>) {
+                      loadedList.add(fromJson(item));
+                    }
+                  } catch (e) {
+                    _log('⚠️ Error parsing decoded item $i: $e', isError: true);
+                  }
+                }
               }
-            }).toList();
-          } catch (e) {
-            _log('⚠️ Could not parse stored data as JSON list: $e',
-                isError: true);
-            throw Exception('Invalid list format in storage');
+            } catch (e) {
+              _log('⚠️ Failed to decode string as JSON: $e', isError: true);
+            }
+          } else {
+            // Try one more fallback approach
+            try {
+              final stringified = json.encode(storedData);
+              final decoded = json.decode(stringified);
+              if (decoded is List) {
+                _log('📋 Processing list from stringified data',
+                    isError: false);
+                for (var i = 0; i < decoded.length; i++) {
+                  try {
+                    final item = decoded[i];
+                    if (item is Map<String, dynamic>) {
+                      loadedList.add(fromJson(item));
+                    }
+                  } catch (e) {
+                    _log('⚠️ Error parsing stringified item $i: $e',
+                        isError: true);
+                  }
+                }
+              }
+            } catch (e) {
+              _log('⚠️ Final fallback approach failed: $e', isError: true);
+              // At this point, we've tried our best to recover, but can't parse the data
+            }
           }
-        }
-
-        // Update the list and notify
-        if (loadedList.isNotEmpty) {
-          rxList.assignAll(loadedList);
-
-          if (onInitialValue != null) {
-            onInitialValue(loadedList);
-          }
-
-          _log('🔄 Loaded ${loadedList.length} items from storage: key=$key');
+        } catch (e) {
+          _log('⚠️ Top-level error loading list data: $e', isError: true);
         }
       }
 
-      // STEP 2: Set up auto-sync from Rx list to storage
-      ever(
-        rxList,
-        (List<T> list) async {
-          try {
-            if (list.isNotEmpty) {
-              // When list has items, save to storage
-              final List<Map<String, dynamic>> jsonList =
-                  list.map((item) => toJson(item)).toList();
-              await writeToStorage(key, jsonList);
-              _log('🔄 Auto-saved ${list.length} items to storage: key=$key');
-            } else {
-              // When list is empty, remove from storage
-              await removeFromStorage(key);
-              _log('🔄 Auto-removed empty list from storage: key=$key');
-            }
-          } catch (e) {
-            _log('⚠️ Error in list auto-sync: $e', isError: true);
-          }
-        },
-      );
+      // Update the list if we loaded items successfully
+      if (loadedList.isNotEmpty) {
+        rxList.assignAll(loadedList);
+        _log('🔄 Loaded ${loadedList.length} items to RxList: key=$key');
 
-      _log('🔄 Auto-sync enabled for list: key=$key');
+        if (onInitialValue != null) {
+          onInitialValue(loadedList);
+        }
+      } else {
+        _log('ℹ️ No valid items loaded for key=$key, keeping existing list');
+      }
+
+      // STEP 2: Set up auto-sync from Rx list to storage
+      // Wrap in try-catch to prevent errors in the setup itself
+      try {
+        ever(
+          rxList,
+          (List<T> list) async {
+            try {
+              if (list.isNotEmpty) {
+                // When list has items, save to storage
+                final List<Map<String, dynamic>> jsonList =
+                    list.map((item) => toJson(item)).toList();
+                await writeToStorageInternal(key, jsonList);
+                _log('🔄 Auto-saved ${list.length} items to storage: key=$key');
+              } else {
+                // When list is empty, remove from storage
+                await removeFromStorageInternal(key);
+                _log('🔄 Auto-removed empty list from storage: key=$key');
+              }
+            } catch (e) {
+              _log('⚠️ Error in list auto-sync callback: $e', isError: true);
+            }
+          },
+        );
+        _log('🔄 Auto-sync enabled for list: key=$key');
+      } catch (e) {
+        _log('⚠️ Error setting up list reactive listener: $e', isError: true);
+      }
     } catch (e) {
-      _log('⚠️ Error setting up list auto-sync: $e', isError: true);
+      _log('⚠️ Error in initializeListStorageWithListener: $e', isError: true);
     }
   }
 
@@ -568,19 +601,56 @@ class StorageUtils {
     required String key,
     required T Function(Map<String, dynamic>) fromJson,
   }) async {
+    await _ensureConfigured();
+    List<T> result = [];
+
     try {
-      final storedData = await readFromStorage(key);
-      if (storedData != null && storedData is List) {
-        final list = storedData
-            .map((item) => fromJson(item as Map<String, dynamic>))
-            .toList();
-        _log('📋 Loaded list with ${list.length} items: key=$key');
-        return list;
+      final storedData = await readFromStorageInternal(key);
+      if (storedData == null) {
+        return [];
       }
+
+      if (storedData is List) {
+        // Process each item in the list carefully
+        for (var i = 0; i < storedData.length; i++) {
+          try {
+            final item = storedData[i];
+            if (item is Map<String, dynamic>) {
+              result.add(fromJson(item));
+            } else {
+              _log('⚠️ List item at index $i is not a Map: ${item.runtimeType}',
+                  isError: true);
+            }
+          } catch (e) {
+            _log('⚠️ Error processing list item at index $i: $e',
+                isError: true);
+          }
+        }
+      } else if (storedData is String) {
+        // Try to parse string as JSON array
+        try {
+          final listData = json.decode(storedData);
+          if (listData is List) {
+            for (var item in listData) {
+              if (item is Map<String, dynamic>) {
+                result.add(fromJson(item));
+              }
+            }
+          }
+        } catch (e) {
+          _log('⚠️ Failed to parse string as JSON list: $e', isError: true);
+        }
+      } else {
+        _log('⚠️ Stored data is not a list: ${storedData.runtimeType}',
+            isError: true);
+      }
+
+      _log('📋 Loaded list with ${result.length} items: key=$key');
     } catch (e) {
       _log('⚠️ Error loading list: $e', isError: true);
     }
-    return [];
+
+    return result;
   }
 
   /// Add an item to a stored list
@@ -856,16 +926,27 @@ class StorageUtils {
 
     try {
       if (data is String) {
+        // First check if it's an encrypted string we need to handle
+        if (data.startsWith('ENCRYPTED:')) {
+          return data; // Return as is, it will be handled by the decryption logic
+        }
+
         // Check if string looks like JSON
         if ((data.startsWith('{') && data.endsWith('}')) ||
             (data.startsWith('[') && data.endsWith(']'))) {
-          return json.decode(data);
+          try {
+            return json.decode(data);
+          } catch (e) {
+            _log('⚠️ String looks like JSON but failed to parse: $e',
+                isError: true);
+            return data; // Return original if parsing fails
+          }
         }
       }
       return data;
     } catch (e) {
-      _log('⚠️ Error decoding JSON for key=$key: $e', isError: true);
-      return data; // Return original data if parsing fails
+      _log('⚠️ Error in _safelyDecodeJsonData for key=$key: $e', isError: true);
+      return data; // Return original data if any error occurs
     }
   }
 
@@ -942,10 +1023,21 @@ class StorageUtils {
           value is String &&
           value.startsWith('ENCRYPTED:')) {
         final decrypted = _decrypt(value.substring(10)); // Remove prefix
-        return _safelyDecodeJsonData(decrypted, key);
+
+        try {
+          // Always try to parse decrypted data as JSON first
+          if ((decrypted.startsWith('{') && decrypted.endsWith('}')) ||
+              (decrypted.startsWith('[') && decrypted.endsWith(']'))) {
+            return json.decode(decrypted);
+          }
+          return decrypted;
+        } catch (e) {
+          _log('⚠️ Failed to decode decrypted data as JSON: $e', isError: true);
+          return decrypted;
+        }
       }
 
-      // For non-encrypted values
+      // For non-encrypted values, try to decode JSON
       return _safelyDecodeJsonData(value, key);
     } catch (e) {
       _log('⚠️ Error reading from storage: $e', isError: true);
