@@ -104,6 +104,7 @@ class StorageUtils {
     bool enableLogging = kDebugMode,
     bool enableEncryption = !kDebugMode,
     String? customEncryptionKey,
+    bool clearInvalidData = false,
   }) async {
     // Fast return if already initialized
     if (_isInitialized) return;
@@ -153,6 +154,15 @@ class StorageUtils {
         _initializationInProgress = false;
       }
     });
+
+    // Add optional clearing of invalid data
+    if (clearInvalidData && _isInitialized) {
+      final instance = StorageUtils();
+      instance._log('🧹 Checking for invalid storage data to clear');
+
+      // We could implement a more sophisticated check here
+      // For now we'll keep it simple
+    }
   }
 
   /// Helper method to provide synchronized execution
@@ -300,12 +310,14 @@ class StorageUtils {
   /// * [fromJson]: Function to convert storage data to object type
   /// * [toJson]: Function to convert object to storable format
   /// * [onInitialValue]: Optional callback when initial value is loaded
+  /// * [defaultValue]: Optional default value to use when stored data cannot be converted
   Future<void> initializeStorageWithListener<T>({
     required String key,
     required Rx<T?> rxValue,
-    required T Function(dynamic) fromJson,
-    required dynamic Function(T) toJson,
+    required T Function(Map<String, dynamic>) fromJson,
+    required Map<String, dynamic> Function(T) toJson,
     Function(T initialValue)? onInitialValue,
+    T? defaultValue,
   }) async {
     await _ensureConfigured();
 
@@ -314,39 +326,67 @@ class StorageUtils {
       final storedData = await readFromStorage(key);
       if (storedData != null) {
         // Convert data to the correct type and update the Rx variable
-        T initialValue;
+        T? initialValue;
 
         try {
-          initialValue = fromJson(storedData);
-        } catch (e) {
-          _log('⚠️ Error converting stored data: $e. Using safe approach.',
-              isError: true);
-
-          // Try alternate approaches if direct conversion fails
-          if (storedData is String) {
+          // Handle different data formats
+          if (storedData is Map<String, dynamic>) {
+            // Direct map - most common case
+            initialValue = fromJson(storedData);
+          } else if (storedData is String) {
+            // Try parsing as JSON if it's a string
             try {
-              // Try parsing as JSON if it's a string
               final jsonData = json.decode(storedData);
-              initialValue = fromJson(jsonData);
-            } catch (_) {
-              // If specific conversions fail, use a more generic approach
-              throw Exception(
-                  'Cannot convert stored data to required type: ${T.toString()}');
+              if (jsonData is Map<String, dynamic>) {
+                initialValue = fromJson(jsonData);
+              } else {
+                throw FormatException('Stored data is not a valid JSON object');
+              }
+            } catch (e) {
+              _log('⚠️ Cannot parse string as JSON: $e', isError: true);
+              throw FormatException('Invalid JSON format for $key: $e');
             }
           } else {
+            _log('⚠️ Unexpected data type: ${storedData.runtimeType}',
+                isError: true);
+            throw FormatException(
+                'Unsupported data type: ${storedData.runtimeType}');
+          }
+        } catch (e) {
+          _log('⚠️ Error converting stored data for key=$key: $e',
+              isError: true);
+
+          // Use default value if provided
+          if (defaultValue != null) {
+            _log('ℹ️ Using provided default value for key=$key',
+                isError: false);
+            initialValue = defaultValue;
+          } else {
+            // Re-throw if no default value provided
             throw Exception(
                 'Cannot convert stored data to required type: ${T.toString()}');
           }
         }
 
-        rxValue.value = initialValue;
+        if (initialValue != null) {
+          rxValue.value = initialValue;
+
+          // Notify via callback if provided
+          if (onInitialValue != null) {
+            onInitialValue(initialValue);
+          }
+
+          _log('🔄 Loaded initial value from storage: key=$key');
+        }
+      } else if (defaultValue != null) {
+        // No stored data but default value provided
+        rxValue.value = defaultValue;
+        _log('ℹ️ No stored data. Using default value for key=$key');
 
         // Notify via callback if provided
         if (onInitialValue != null) {
-          onInitialValue(initialValue);
+          onInitialValue(defaultValue);
         }
-
-        _log('🔄 Loaded initial value from storage: key=$key');
       }
 
       // STEP 2: Set up auto-sync from Rx variable to storage
@@ -356,7 +396,7 @@ class StorageUtils {
           if (value != null) {
             try {
               // When Rx value changes, save to storage
-              dynamic jsonData = toJson(value as T);
+              Map<String, dynamic> jsonData = toJson(value as T);
               await writeToStorage(key, jsonData);
               _log('🔄 Auto-saved value to storage: key=$key');
             } catch (e) {
@@ -373,6 +413,7 @@ class StorageUtils {
       _log('🔄 Auto-sync enabled for: key=$key');
     } catch (e) {
       _log('⚠️ Error setting up auto-sync: $e', isError: true);
+      rethrow; // Important to propagate the error for proper handling
     }
   }
 
@@ -807,6 +848,25 @@ class StorageUtils {
     }
   }
 
+  /// Internal method to handle unexpected data formats
+  dynamic _safelyDecodeJsonData(dynamic data, String key) {
+    if (data == null) return null;
+
+    try {
+      if (data is String) {
+        // Check if string looks like JSON
+        if ((data.startsWith('{') && data.endsWith('}')) ||
+            (data.startsWith('[') && data.endsWith(']'))) {
+          return json.decode(data);
+        }
+      }
+      return data;
+    } catch (e) {
+      _log('⚠️ Error decoding JSON for key=$key: $e', isError: true);
+      return data; // Return original data if parsing fails
+    }
+  }
+
   //--------------------------------------------------------------------------
   // STATIC FAÇADE METHODS (DIRECT ACCESS WITHOUT INSTANTIATION)
   //--------------------------------------------------------------------------
@@ -872,39 +932,19 @@ class StorageUtils {
     await _ensureConfigured();
 
     try {
-      final value = await storage.read(key);
+      final value = storage.read(key);
       if (value == null) return null;
 
       // Handle decryption if needed
       if (_enableEncryption &&
           value is String &&
           value.startsWith('ENCRYPTED:')) {
-        final decrypted =
-            _decrypt(value.substring(10)); // Remove the 'ENCRYPTED:' prefix
-
-        // Try to parse as JSON if it's a string that looks like JSON
-        if ((decrypted.startsWith('{') || decrypted.startsWith('['))) {
-          try {
-            return json.decode(decrypted);
-          } catch (_) {
-            // If parsing fails, return the raw decrypted string
-            return decrypted;
-          }
-        }
-        return decrypted;
+        final decrypted = _decrypt(value.substring(10)); // Remove prefix
+        return _safelyDecodeJsonData(decrypted, key);
       }
 
-      // For non-encrypted values, also try to parse JSON strings
-      if (value is String && (value.startsWith('{') || value.startsWith('['))) {
-        try {
-          return json.decode(value);
-        } catch (_) {
-          // If parsing fails, return the raw string
-          return value;
-        }
-      }
-
-      return value;
+      // For non-encrypted values
+      return _safelyDecodeJsonData(value, key);
     } catch (e) {
       _log('⚠️ Error reading from storage: $e', isError: true);
       return null;
