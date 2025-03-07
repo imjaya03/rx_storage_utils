@@ -1,4 +1,7 @@
+import 'package:example/helpers/mock_rx_preferences.dart';
+import 'package:example/screens/book_management_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
 void main() {
   runApp(const MyApp());
@@ -7,119 +10,378 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
+    return GetMaterialApp(
+      title: 'RxStorage Utils Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const StorageDemoPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class StorageDemoPage extends StatefulWidget {
+  const StorageDemoPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<StorageDemoPage> createState() => _StorageDemoPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _StorageDemoPageState extends State<StorageDemoPage> {
+  // Initialize storage helper instance
+  final _preferences = RxPreferences();
 
-  void _incrementCounter() {
+  // Define keys for storage
+  static const _usernameKey = 'username';
+  static const _isDarkModeKey = 'isDarkMode';
+  static const _counterKey = 'counter';
+  static const _favoritesKey = 'favorites';
+
+  // UI state variables with default values
+  String _username = 'Guest';
+  bool _isDarkMode = false;
+  int _counter = 0;
+  List<String> _favorites = [];
+
+  // Text controllers
+  final _usernameController = TextEditingController();
+  final _favoriteController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStoredData();
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _favoriteController.dispose();
+    super.dispose();
+  }
+
+  // Load all stored data
+  Future<void> _loadStoredData() async {
+    // Load username with default value
+    _username = await _preferences.getString(_usernameKey) ?? 'Guest';
+    _usernameController.text = _username;
+
+    // Load dark mode preference
+    _isDarkMode = await _preferences.getBool(_isDarkModeKey) ?? false;
+
+    // Load counter value
+    _counter = await _preferences.getInt(_counterKey) ?? 0;
+
+    // Load favorites list
+    final List<String>? savedFavorites =
+        await _preferences.getStringList(_favoritesKey);
+    if (savedFavorites != null) {
+      _favorites = savedFavorites;
+    }
+
+    setState(() {});
+  }
+
+  // Save username to storage
+  Future<void> _saveUsername() async {
+    final newUsername = _usernameController.text.trim();
+    if (newUsername.isNotEmpty) {
+      await _preferences.setString(_usernameKey, newUsername);
+      setState(() {
+        _username = newUsername;
+      });
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Username saved')),
+        );
+      }
+    }
+  }
+
+  // Toggle dark mode and save preference
+  Future<void> _toggleDarkMode(bool value) async {
+    await _preferences.setBool(_isDarkModeKey, value);
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isDarkMode = value;
     });
+  }
+
+  // Increment counter and save
+  Future<void> _incrementCounter() async {
+    final newValue = _counter + 1;
+    await _preferences.setInt(_counterKey, newValue);
+    setState(() {
+      _counter = newValue;
+    });
+  }
+
+  // Add item to favorites
+  Future<void> _addFavorite() async {
+    final newItem = _favoriteController.text.trim();
+    if (newItem.isNotEmpty && !_favorites.contains(newItem)) {
+      final updatedList = [..._favorites, newItem];
+      await _preferences.setStringList(_favoritesKey, updatedList);
+      setState(() {
+        _favorites = updatedList;
+        _favoriteController.clear();
+      });
+    }
+  }
+
+  // Remove item from favorites
+  Future<void> _removeFavorite(String item) async {
+    final updatedList = _favorites.where((i) => i != item).toList();
+    await _preferences.setStringList(_favoritesKey, updatedList);
+    setState(() {
+      _favorites = updatedList;
+    });
+  }
+
+  // Clear all stored data
+  Future<void> _clearAllData() async {
+    await _preferences.clear();
+    setState(() {
+      _username = 'Guest';
+      _usernameController.text = _username;
+      _isDarkMode = false;
+      _counter = 0;
+      _favorites = [];
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('All data cleared')),
+      );
+    }
+  }
+
+  // Navigate to the book management screen
+  void _navigateToBookManagement() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const BookManagementScreen(),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
+        title: const Text('RxStorage Utils Demo'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: _clearAllData,
+            tooltip: 'Clear all stored data',
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
+      body: ListView(
+        padding: const EdgeInsets.all(16.0),
+        children: [
+          // Complex Data Demo Card
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Complex Data Management',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'This demo shows how to store and manage complex data types like Books using JSON serialization.',
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: ElevatedButton.icon(
+                      onPressed: _navigateToBookManagement,
+                      icon: const Icon(Icons.library_books),
+                      label: const Text('Open Book Library'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+          ),
+
+          const SizedBox(height: 16),
+
+          // Welcome card with username
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Welcome, $_username!',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Change Username',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: _saveUsername,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Save Username'),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Settings section
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Settings',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    title: const Text('Dark Mode'),
+                    subtitle: Text(_isDarkMode ? 'Enabled' : 'Disabled'),
+                    value: _isDarkMode,
+                    onChanged: _toggleDarkMode,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Counter section
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Persistent Counter',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '$_counter',
+                          style: Theme.of(context).textTheme.displayMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          onPressed: _incrementCounter,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Increment'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Favorites section
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Favorites List',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _favoriteController,
+                          decoration: const InputDecoration(
+                            labelText: 'Add a favorite item',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle),
+                        onPressed: _addFavorite,
+                        tooltip: 'Add to favorites',
+                        iconSize: 32,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (_favorites.isEmpty)
+                    const Center(
+                      child: Text('No favorites added yet'),
+                    )
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _favorites.length,
+                      itemBuilder: (context, index) {
+                        final item = _favorites[index];
+                        return ListTile(
+                          leading: const Icon(Icons.favorite),
+                          title: Text(item),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _removeFavorite(item),
+                            tooltip: 'Remove from favorites',
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
