@@ -40,19 +40,19 @@ import 'package:package_info_plus/package_info_plus.dart';
 ///   toJson: (profile) => profile.toJson(),
 /// );
 /// ```
-class StorageUtils {
+class RxStorageUtils {
   //--------------------------------------------------------------------------
   // SINGLETON PATTERN IMPLEMENTATION
   //--------------------------------------------------------------------------
 
   /// Private constructor
-  StorageUtils._internal();
+  RxStorageUtils._internal();
 
   /// Singleton instance
-  static final StorageUtils _instance = StorageUtils._internal();
+  static final RxStorageUtils _instance = RxStorageUtils._internal();
 
   /// Factory constructor that returns the singleton instance
-  factory StorageUtils() => _instance;
+  factory RxStorageUtils() => _instance;
 
   //--------------------------------------------------------------------------
   // PROPERTIES
@@ -129,7 +129,7 @@ class StorageUtils {
         await GetStorage.init();
 
         // Initialize the singleton instance
-        final instance = StorageUtils();
+        final instance = RxStorageUtils();
 
         // Configure with provided settings
         instance._enableLogging = enableLogging;
@@ -157,7 +157,7 @@ class StorageUtils {
 
     // Add optional clearing of invalid data
     if (clearInvalidData && _isInitialized) {
-      final instance = StorageUtils();
+      final instance = RxStorageUtils();
       instance._log('🧹 Checking for invalid storage data to clear');
 
       // We could implement a more sophisticated check here
