@@ -7,42 +7,51 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-/// # StorageUtil
+/// # RxStorageUtils
 ///
-/// A utility class that simplifies persistent data storage in Flutter applications.
-/// Provides methods for storing, retrieving, and managing data with optional encryption.
+/// A powerful utility for persistent data storage in Flutter applications with
+/// reactive (Rx) variable synchronization support.
 ///
 /// ## Key Features:
 ///
-/// * Easy data persistence with type safety
-/// * Automatic real-time synchronization with reactive (Rx) variables
-/// * Support for both individual values and lists of objects
+/// * Type-safe data persistence with GetStorage backend
+/// * Automatic two-way synchronization with reactive (Rx) variables
+/// * Support for individual values, objects, and collections
 /// * Optional data encryption for sensitive information
 /// * Expiration support for temporary data storage
+/// * Change listeners for monitoring data updates
 ///
 /// ## Basic Usage Examples:
 ///
 /// ```dart
+/// // Initialize in your main.dart
+/// await RxStorageUtils.init();
+///
 /// // Store a simple value
-/// await StorageUtil().setValue('username', 'john_doe');
+/// await RxStorageUtils.write('username', 'john_doe');
 ///
-/// // Retrieve a simple value
-/// String? username = await StorageUtil().getValue<String>('username');
+/// // Retrieve a value with type safety
+/// String? username = await RxStorageUtils.get<String>('username');
 ///
-/// // Store an object
-/// await StorageUtil().writeToStorage('user', userModel.toJson());
-///
-/// // Link a reactive variable to persistent storage (auto-sync)
-/// await StorageUtil().initializeStorageWithListener(
+/// // Link a reactive variable to storage
+/// await RxStorageUtils().linkWithStorage(
 ///   key: 'user_profile',
 ///   rxValue: userProfileRx,
 ///   fromJson: UserProfile.fromJson,
 ///   toJson: (profile) => profile.toJson(),
 /// );
+///
+/// // Link a reactive list to storage
+/// await RxStorageUtils().linkListWithStorage(
+///   key: 'todo_items',
+///   rxList: todoItemsRx,
+///   fromJson: TodoItem.fromJson,
+///   toJson: (item) => item.toJson(),
+/// );
 /// ```
 class RxStorageUtils {
   //--------------------------------------------------------------------------
-  // SINGLETON PATTERN IMPLEMENTATION
+  // SINGLETON PATTERN & INITIALIZATION
   //--------------------------------------------------------------------------
 
   /// Private constructor
@@ -54,49 +63,34 @@ class RxStorageUtils {
   /// Factory constructor that returns the singleton instance
   factory RxStorageUtils() => _instance;
 
-  //--------------------------------------------------------------------------
-  // PROPERTIES
-  //--------------------------------------------------------------------------
-
   /// The underlying storage instance
   GetStorage? _storage;
 
-  /// Whether to show debug logs (default: true in debug mode, false in release)
+  /// Configuration properties
   bool _enableLogging = kDebugMode;
-
-  /// Whether to encrypt stored data (default: true)
   bool _enableEncryption = !kDebugMode;
-
-  /// Encryption key when encryption is enabled (auto-generated based on app package)
-  String _encryptionKey = '<WRITE_YOUR_KEY>';
-
-  /// Indicates if auto-configuration has completed
+  String _encryptionKey = '';
   bool _autoConfigured = false;
 
-  /// Indicates if storage has been initialized
+  /// Initialization state tracking
   static bool _isInitialized = false;
-
-  /// Indicates if auto-initialization warning has been shown
   static bool _autoInitWarningShown = false;
-
-  /// Lock for thread-safe initialization
   static final _initLock = Object();
-
-  /// Initialization in progress flag
   static bool _initializationInProgress = false;
 
-  //--------------------------------------------------------------------------
-  // INITIALIZATION & CONFIGURATION
-  //--------------------------------------------------------------------------
+  /// Listener management
+  final Map<String, List<Function(dynamic oldValue, dynamic newValue)>>
+      _changeListeners = {};
+  bool _notifyListeners = true;
 
   /// Initialize the storage system
-  /// This should be called from main.dart before runApp() or during app bootstrap
   ///
-  /// Example:
+  /// Should be called early in app lifecycle (before using storage operations)
+  ///
   /// ```dart
   /// Future<void> main() async {
   ///   WidgetsFlutterBinding.ensureInitialized();
-  ///   await StorageUtil.init();
+  ///   await RxStorageUtils.init();
   ///   runApp(MyApp());
   /// }
   /// ```
@@ -109,18 +103,10 @@ class RxStorageUtils {
     // Fast return if already initialized
     if (_isInitialized) return;
 
-    // Use a synchronized approach to prevent multiple initializations
-    await synchronized(() async {
+    // Prevent multiple simultaneous initializations
+    await _synchronizedInit(() async {
       // Double-check pattern for thread safety
       if (_isInitialized) return;
-
-      if (_initializationInProgress) {
-        // Wait for initialization to complete if another thread is already doing it
-        while (_initializationInProgress) {
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-        return;
-      }
 
       _initializationInProgress = true;
 
@@ -128,10 +114,9 @@ class RxStorageUtils {
         // Initialize GetStorage
         await GetStorage.init();
 
-        // Initialize the singleton instance
-        final instance = RxStorageUtils();
-
-        // Configure with provided settings
+        // Configure the singleton instance
+        final instance = RxStorageUtils._instance;
+        instance._storage = GetStorage();
         instance._enableLogging = enableLogging;
         instance._enableEncryption = enableEncryption;
 
@@ -139,113 +124,87 @@ class RxStorageUtils {
           instance._encryptionKey = customEncryptionKey;
         }
 
-        // Initialize storage only if not already initialized
-        instance._storage ??= GetStorage();
-
-        // Auto-configure securely to generate default encryption key if needed
-        await instance._autoConfigureSecurely();
+        // Auto-configure encryption key if needed
+        await instance._configureSecurity();
 
         _isInitialized = true;
-        instance._log('📦 StorageUtil initialized successfully');
+        instance._log('RxStorageUtils initialized successfully');
       } catch (e) {
-        print('⚠️ Error initializing StorageUtil: $e');
-        rethrow; // Propagate error to caller since this is a critical initialization
+        print('Error initializing RxStorageUtils: $e');
+        rethrow; // Critical initialization error
       } finally {
         _initializationInProgress = false;
       }
     });
 
-    // Add optional clearing of invalid data
+    // Optional data validation
     if (clearInvalidData && _isInitialized) {
-      final instance = RxStorageUtils();
-      instance._log('🧹 Checking for invalid storage data to clear');
-
-      // We could implement a more sophisticated check here
-      // For now we'll keep it simple
+      RxStorageUtils()._log('Checking for invalid storage data');
+      await _instance._cleanupInvalidData();
     }
   }
 
-  /// Helper method to provide synchronized execution
-  static Future<void> synchronized(Future<void> Function() action) async {
-    // This is a simple synchronization helper since Dart doesn't have built-in locks
-    // For more complex scenarios, consider using a package like 'synchronized'
+  /// Helper method to synchronize initialization
+  static Future<void> _synchronizedInit(Future<void> Function() action) async {
+    if (_initializationInProgress) {
+      // Wait for existing initialization to complete
+      while (_initializationInProgress) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      return;
+    }
     await action();
   }
 
-  /// Internal method to initialize storage on first use if not explicitly initialized
+  /// Internal method to ensure storage is initialized before use
   Future<void> _ensureInitialized() async {
     if (!_isInitialized) {
-      // Show warning only once
       if (!_autoInitWarningShown) {
         print(
-            '⚠️ StorageUtil.init() was not called before usage. Auto-initializing with default settings.');
+            'WARNING: RxStorageUtils.init() was not called. Auto-initializing with default settings.');
         _autoInitWarningShown = true;
       }
 
-      await init(); // Call with default settings
+      await init();
 
-      // Double-check initialization succeeded
       if (!_isInitialized) {
         throw StateError(
-            'Failed to auto-initialize StorageUtil. Please call StorageUtil.init() explicitly before using any storage operations.');
+            'Failed to initialize RxStorageUtils. Call RxStorageUtils.init() explicitly.');
       }
     }
   }
 
-  /// Initialize the storage system (legacy method, use static init() instead)
-  @Deprecated('Use static StorageUtil.init() method instead')
-  Future<void> _initStorage() async {
-    try {
-      await _ensureInitialized();
-    } catch (e) {
-      _log('⚠️ Error initializing storage: $e', isError: true);
-    }
-  }
-
-  /// Automatically configure storage with secure defaults
-  /// This generates an encryption key based on the app's package info
-  Future<void> _autoConfigureSecurely() async {
+  /// Configure security settings including encryption key generation
+  Future<void> _configureSecurity() async {
     if (_autoConfigured) return;
 
     try {
-      // Only generate encryption key if not custom provided
-      if (_encryptionKey == '<WRITE_YOUR_KEY>') {
-        // Get app package info for generating a unique encryption key
+      // Generate encryption key if not provided and encryption is enabled
+      if (_enableEncryption && _encryptionKey.isEmpty) {
+        // Get app package info for generating a unique key
         final packageInfo = await PackageInfo.fromPlatform();
         final appId = packageInfo.packageName;
         final appVersion = packageInfo.version;
         final buildNumber = packageInfo.buildNumber;
 
-        // Create a reasonably secure default encryption key based on app identity
-        final baseKey =
-            '$appId-$appVersion-$buildNumber-PiTaskWatchSecureStorage';
+        // Create a secure key based on app identity
+        final baseKey = '$appId-$appVersion-$buildNumber-SecureStorageSalt';
         final keyBytes = utf8.encode(baseKey);
         final digest = sha256.convert(keyBytes);
         _encryptionKey = digest.toString();
 
-        _log('🔐 Generated secure app-specific encryption key');
+        _log('Generated secure app-specific encryption key');
       }
 
       _autoConfigured = true;
-      _log(
-          '🔐 Auto-configured securely: logging=$_enableLogging, encryption=$_enableEncryption');
+      _log('Security configuration complete: encryption=$_enableEncryption');
     } catch (e) {
-      _log('⚠️ Auto-configuration failed: $e. Using fallback configuration.',
+      _log('Security auto-configuration failed: $e. Using fallback settings.',
           isError: true);
 
-      // Fallback to basic configuration
-      _enableLogging = kDebugMode;
+      // Fallback configuration
       _enableEncryption = false;
       _encryptionKey = '';
-    }
-  }
-
-  /// Ensure auto-configuration has completed
-  /// This is called internally before any storage operation
-  Future<void> _ensureConfigured() async {
-    await _ensureInitialized();
-    if (!_autoConfigured) {
-      await _autoConfigureSecurely();
     }
   }
 
@@ -253,241 +212,275 @@ class RxStorageUtils {
   GetStorage get storage {
     if (_storage == null) {
       throw StateError(
-          'Storage not initialized. Call StorageUtil.init() before using storage.');
+          'Storage not initialized. Call RxStorageUtils.init() before using storage.');
     }
     return _storage!;
   }
 
-  //--------------------------------------------------------------------------
-  // BASIC STORAGE OPERATIONS - INSTANCE METHODS
-  //--------------------------------------------------------------------------
+  /// Clean up invalid data in storage
+  Future<void> _cleanupInvalidData() async {
+    try {
+      final keys = storage.getKeys();
+      int cleanedCount = 0;
 
-  /// Read data from storage by key (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.read(key)`
-  @Deprecated('Use StorageUtils.read(key) for static access')
-  Future<dynamic> readFromStorage(String key) async {
-    return await readFromStorageInternal(key);
-  }
+      for (final key in keys) {
+        // Check for expired values
+        if (key.endsWith('_expiration')) {
+          final baseKey = key.substring(0, key.length - 11);
+          final expiryTime = await getValueInternal<int>(key);
 
-  /// Write data to storage with key (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.write(key, data)`
-  @Deprecated('Use StorageUtils.write(key, data) for static access')
-  Future<void> writeToStorage(String key, dynamic data) async {
-    return await writeToStorageInternal(key, data);
-  }
+          if (expiryTime != null &&
+              DateTime.now().millisecondsSinceEpoch > expiryTime) {
+            await removeFromStorageInternal(baseKey);
+            await removeFromStorageInternal(key);
+            cleanedCount++;
+          }
+        }
 
-  /// Delete a value from storage (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.remove(key)`
-  @Deprecated('Use StorageUtils.remove(key) for static access')
-  Future<void> removeFromStorage(String key) async {
-    return await removeFromStorageInternal(key);
-  }
+        // More validation could be added here
+      }
 
-  /// Clear all stored data (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.clear()`
-  @Deprecated('Use StorageUtils.clear() for static access')
-  Future<void> clearStorage() async {
-    return await clearStorageInternal();
+      if (cleanedCount > 0) {
+        _log('Cleaned up $cleanedCount expired items');
+      }
+    } catch (e) {
+      _log('Error during data cleanup: $e', isError: true);
+    }
   }
 
   //--------------------------------------------------------------------------
-  // REACTIVE STORAGE METHODS (AUTO-SYNC WITH RX VARIABLES)
+  // CHANGE LISTENERS
   //--------------------------------------------------------------------------
 
-  /// Link a reactive variable to persistent storage with automatic synchronization
+  /// Register a listener for data changes for a specific key
   ///
-  /// This creates a two-way binding where:
-  /// * When the app starts, the stored value is loaded into the reactive variable
-  /// * When the reactive variable changes, storage is automatically updated
+  /// Returns a dispose function to unregister the listener
   ///
-  /// Parameters:
-  /// * [key]: Storage key
-  /// * [rxValue]: Reactive variable to link with storage
-  /// * [fromJson]: Function to convert storage data to object type
-  /// * [toJson]: Function to convert object to storable format
-  /// * [onInitialValue]: Optional callback when initial value is loaded
-  /// * [defaultValue]: Optional default value to use when stored data cannot be converted
-  Future<void> initializeStorageWithListener<T>({
-    required String key,
-    required Rx<T?> rxValue,
-    required T Function(Map<String, dynamic>) fromJson,
-    required Map<String, dynamic> Function(T) toJson,
-    Function(T initialValue)? onInitialValue,
-    T? defaultValue,
+  /// ```dart
+  /// final dispose = RxStorageUtils.onChange('settings', (oldValue, newValue) {
+  ///   print('Settings changed from $oldValue to $newValue');
+  /// });
+  ///
+  /// // Later when no longer needed:
+  /// dispose();
+  /// ```
+  Function() onDataChange(
+      String key, Function(dynamic oldValue, dynamic newValue) listener) {
+    _changeListeners[key] ??= [];
+    _changeListeners[key]!.add(listener);
+
+    return () {
+      if (_changeListeners.containsKey(key)) {
+        _changeListeners[key]!.remove(listener);
+        if (_changeListeners[key]!.isEmpty) {
+          _changeListeners.remove(key);
+        }
+      }
+    };
+  }
+
+  /// Temporarily suspend notifications to change listeners
+  ///
+  /// Useful for batch operations to avoid excessive notifications
+  ///
+  /// ```dart
+  /// await RxStorageUtils.withoutNotifications(() async {
+  ///   await RxStorageUtils.write('key1', value1);
+  ///   await RxStorageUtils.write('key2', value2);
+  ///   await RxStorageUtils.write('key3', value3);
+  /// }, notifyKeysAfter: ['key1', 'key3']);
+  /// ```
+  Future<T> withoutNotifications<T>(
+    Future<T> Function() action, {
+    List<String>? notifyKeysAfter,
   }) async {
-    await _ensureConfigured();
+    final previousState = _notifyListeners;
+    _notifyListeners = false;
 
     try {
-      // STEP 1: Load existing data from storage (if any)
-      final storedData = await readFromStorage(key);
-      if (storedData != null) {
-        // Convert data to the correct type and update the Rx variable
-        T? initialValue;
+      // Capture old values for keys that will be notified
+      final oldValues = <String, dynamic>{};
+      if (notifyKeysAfter != null) {
+        for (final key in notifyKeysAfter) {
+          oldValues[key] = await readFromStorageInternal(key);
+        }
+      }
 
+      // Execute the action with notifications disabled
+      final result = await action();
+
+      // Process manual notifications if needed
+      if (previousState && notifyKeysAfter != null) {
+        for (final key in notifyKeysAfter) {
+          final newValue = await readFromStorageInternal(key);
+          _notifyListenersForKey(key, oldValues[key], newValue);
+        }
+      }
+
+      return result;
+    } finally {
+      // Restore previous notification state
+      _notifyListeners = previousState;
+    }
+  }
+
+  /// Notify listeners for a specific key
+  void _notifyListenersForKey(String key, dynamic oldValue, dynamic newValue) {
+    if (!_notifyListeners || oldValue == newValue) return;
+
+    if (_changeListeners.containsKey(key)) {
+      // Create a copy of the listeners list to safely iterate
+      final listeners = List.from(_changeListeners[key]!);
+      for (final listener in listeners) {
         try {
-          // Handle different data formats
-          if (storedData is Map<String, dynamic>) {
-            // Direct map - most common case
-            initialValue = fromJson(storedData);
-          } else if (storedData is String) {
-            // Try parsing as JSON if it's a string
-            try {
-              final jsonData = json.decode(storedData);
-              if (jsonData is Map<String, dynamic>) {
-                initialValue = fromJson(jsonData);
-              } else {
-                throw FormatException('Stored data is not a valid JSON object');
-              }
-            } catch (e) {
-              _log('⚠️ Cannot parse string as JSON: $e', isError: true);
-              throw FormatException('Invalid JSON format for $key: $e');
-            }
-          } else {
-            _log('⚠️ Unexpected data type: ${storedData.runtimeType}',
-                isError: true);
-            throw FormatException(
-                'Unsupported data type: ${storedData.runtimeType}');
-          }
+          listener(oldValue, newValue);
         } catch (e) {
-          _log('⚠️ Error converting stored data for key=$key: $e',
-              isError: true);
+          _log('Error in data change listener for key=$key: $e', isError: true);
+        }
+      }
+    }
+  }
 
-          // Use default value if provided
-          if (defaultValue != null) {
-            _log('ℹ️ Using provided default value for key=$key',
-                isError: false);
-            initialValue = defaultValue;
-          } else {
-            // Re-throw if no default value provided
-            throw Exception(
-                'Cannot convert stored data to required type: ${T.toString()}');
-          }
+  //--------------------------------------------------------------------------
+  // REACTIVE VARIABLE SYNCHRONIZATION
+  //--------------------------------------------------------------------------
+
+  /// Link a reactive variable to storage with two-way synchronization
+  ///
+  /// Creates a binding where the Rx variable stays in sync with stored data
+  ///
+  /// ```dart
+  /// // Define a reactive variable
+  /// final userRx = Rx<User?>(null);
+  ///
+  /// // Link it with storage
+  /// await RxStorageUtils().linkWithStorage(
+  ///   key: 'current_user',
+  ///   rxValue: userRx,
+  ///   fromJson: User.fromJson,
+  ///   toJson: (user) => user.toJson(),
+  /// );
+  /// ```
+  Future<void> linkWithStorage<T, S, D>({
+    required String key,
+    required Rx<T?> rxValue,
+    required T Function(S) fromJson,
+    required D Function(T) toJson,
+    Function(T initialValue)? onInitialValue,
+    T? defaultValue,
+    bool autoSync = true,
+  }) async {
+    await _ensureInitialized();
+
+    try {
+      // STEP 1: Load existing data from storage
+      final storedData = await readFromStorageInternal(key);
+      T? initialValue;
+
+      if (storedData != null) {
+        try {
+          initialValue = _convertStoredData<T, S>(storedData, fromJson, key);
+        } catch (e) {
+          _log('Error converting stored data for key=$key: $e', isError: true);
+          initialValue = defaultValue;
+        }
+      }
+
+      // STEP 2: Initialize Rx value
+      if (initialValue != null) {
+        rxValue.value = initialValue;
+
+        if (onInitialValue != null) {
+          onInitialValue(initialValue);
         }
 
-        if (initialValue != null) {
-          rxValue.value = initialValue;
-
-          // Notify via callback if provided
-          if (onInitialValue != null) {
-            onInitialValue(initialValue);
-          }
-
-          _log('🔄 Loaded initial value from storage: key=$key');
-        }
+        _log('Loaded initial value from storage: key=$key');
       } else if (defaultValue != null && rxValue.value == null) {
-        // Only use default value if no stored data AND rxValue is null
+        // Use default only if no stored data AND rxValue is null
         rxValue.value = defaultValue;
-        _log('ℹ️ No stored data. Using default value for key=$key');
+        _log('Using default value for key=$key');
 
-        // Notify via callback if provided
         if (onInitialValue != null) {
           onInitialValue(defaultValue);
         }
       } else if (rxValue.value != null) {
-        _log('ℹ️ Using existing Rx value (ignoring default): key=$key');
+        _log('Using existing Rx value for key=$key');
       }
 
-      // STEP 2: Set up auto-sync from Rx variable to storage
-      ever(
-        rxValue,
-        (dynamic value) async {
-          if (value != null) {
-            try {
-              // When Rx value changes, save to storage
-              Map<String, dynamic> jsonData = toJson(value as T);
-              await writeToStorage(key, jsonData);
-              _log('🔄 Auto-saved value to storage: key=$key');
-            } catch (e) {
-              _log('⚠️ Error saving value to storage: $e', isError: true);
+      // STEP 3: Set up auto-sync if enabled
+      if (autoSync) {
+        ever(
+          rxValue,
+          (dynamic value) async {
+            if (value != null) {
+              try {
+                // Save to storage when Rx value changes
+                await writeToStorageInternal(key, toJson(value as T));
+                _log('Auto-synced value to storage: key=$key');
+              } catch (e) {
+                _log('Error during auto-sync: $e', isError: true);
+              }
+            } else {
+              // Remove from storage when value becomes null
+              await removeFromStorageInternal(key);
+              _log('Auto-removed value from storage: key=$key');
             }
-          } else {
-            // When Rx value is null, remove from storage
-            await removeFromStorage(key);
-            _log('🔄 Auto-removed value from storage: key=$key');
-          }
-        },
-      );
-
-      _log('🔄 Auto-sync enabled for: key=$key');
+          },
+        );
+        _log('Auto-sync enabled for key=$key');
+      }
     } catch (e) {
-      _log('⚠️ Error setting up auto-sync: $e', isError: true);
-      rethrow; // Important to propagate the error for proper handling
+      _log('Error linking Rx value with storage: $e', isError: true);
+      rethrow;
     }
   }
 
-  /// Link a reactive list to persistent storage with automatic synchronization
+  /// Link a reactive list to storage with two-way synchronization
   ///
-  /// This creates a two-way binding where:
-  /// * When the app starts, stored list items are loaded into the reactive list
-  /// * When the reactive list changes, storage is automatically updated
+  /// Creates a binding where the RxList stays in sync with stored data
   ///
-  /// Parameters:
-  /// * [key]: Storage key
-  /// * [rxList]: Reactive list to link with storage
-  /// * [fromJson]: Function to convert storage data to list item type
-  /// * [toJson]: Function to convert list item to storable format
-  /// * [onInitialValue]: Optional callback when initial list is loaded
-  Future<void> initializeListStorageWithListener<T>({
+  /// ```dart
+  /// // Define a reactive list
+  /// final todoItemsRx = RxList<TodoItem>([]);
+  ///
+  /// // Link it with storage
+  /// await RxStorageUtils().linkListWithStorage(
+  ///   key: 'todo_items',
+  ///   rxList: todoItemsRx,
+  ///   fromJson: TodoItem.fromJson,
+  ///   toJson: (item) => item.toJson(),
+  /// );
+  /// ```
+  Future<void> linkListWithStorage<T, S, D>({
     required String key,
     required RxList<T> rxList,
-    required T Function(Map<String, dynamic>) fromJson,
-    required Map<String, dynamic> Function(T) toJson,
+    required T Function(S) fromJson,
+    required D Function(T) toJson,
     Function(List<T> initialList)? onInitialValue,
+    bool autoSync = true,
   }) async {
-    await _ensureConfigured();
+    await _ensureInitialized();
 
     try {
-      // STEP 1: Load existing list from storage (if any)
-      final storedData = await readFromStorage(key);
+      // STEP 1: Load existing list from storage
+      final storedData = await readFromStorageInternal(key);
 
       if (storedData != null) {
         List<T> loadedList = [];
 
-        // Handle different types of stored data
-        if (storedData is List) {
-          loadedList = storedData.map((item) {
-            // Make sure each item is a Map before conversion
-            if (item is Map<String, dynamic>) {
-              return fromJson(item);
-            } else if (item is String) {
-              // Try to parse string items as JSON
-              try {
-                final Map<String, dynamic> jsonMap = json.decode(item);
-                return fromJson(jsonMap);
-              } catch (_) {
-                _log('⚠️ Could not parse list item as JSON: $item',
-                    isError: true);
-                throw Exception('Invalid list item format');
-              }
-            } else {
-              _log('⚠️ Invalid list item type: ${item.runtimeType}',
-                  isError: true);
-              throw Exception('Invalid list item type');
+        try {
+          if (storedData is List) {
+            loadedList = _convertStoredList<T, S>(storedData, fromJson);
+          } else if (storedData is String) {
+            final decoded = json.decode(storedData);
+            if (decoded is List) {
+              loadedList = _convertStoredList<T, S>(decoded, fromJson);
             }
-          }).toList();
-        } else if (storedData is String) {
-          // Try to parse the entire string as a JSON array
-          try {
-            final List<dynamic> jsonList = json.decode(storedData);
-            loadedList = jsonList.map((item) {
-              if (item is Map<String, dynamic>) {
-                return fromJson(item);
-              } else {
-                throw Exception('Invalid item type in JSON list');
-              }
-            }).toList();
-          } catch (e) {
-            _log('⚠️ Could not parse stored data as JSON list: $e',
-                isError: true);
-            throw Exception('Invalid list format in storage');
           }
+        } catch (e) {
+          _log('Error loading list from storage: $e', isError: true);
         }
 
-        // Update the list and notify
         if (loadedList.isNotEmpty) {
           rxList.assignAll(loadedList);
 
@@ -495,273 +488,582 @@ class RxStorageUtils {
             onInitialValue(loadedList);
           }
 
-          _log('🔄 Loaded ${loadedList.length} items from storage: key=$key');
+          _log('Loaded ${loadedList.length} items from storage: key=$key');
         }
       }
 
-      // STEP 2: Set up auto-sync from Rx list to storage
-      ever(
-        rxList,
-        (List<T> list) async {
-          try {
-            if (list.isNotEmpty) {
-              // When list has items, save to storage
-              final List<Map<String, dynamic>> jsonList =
-                  list.map((item) => toJson(item)).toList();
-              await writeToStorage(key, jsonList);
-              _log('🔄 Auto-saved ${list.length} items to storage: key=$key');
-            } else {
-              // When list is empty, remove from storage
-              await removeFromStorage(key);
-              _log('🔄 Auto-removed empty list from storage: key=$key');
+      // STEP 2: Set up auto-sync if enabled
+      if (autoSync) {
+        ever(
+          rxList,
+          (List<T> list) async {
+            try {
+              if (list.isNotEmpty) {
+                final storableList = list.map((item) => toJson(item)).toList();
+                await writeToStorageInternal(key, storableList);
+                _log('Auto-synced ${list.length} items to storage: key=$key');
+              } else {
+                await removeFromStorageInternal(key);
+                _log('Auto-removed empty list from storage: key=$key');
+              }
+            } catch (e) {
+              _log('Error in list auto-sync: $e', isError: true);
             }
-          } catch (e) {
-            _log('⚠️ Error in list auto-sync: $e', isError: true);
-          }
-        },
-      );
-
-      _log('🔄 Auto-sync enabled for list: key=$key');
+          },
+        );
+        _log('List auto-sync enabled for key=$key');
+      }
     } catch (e) {
-      _log('⚠️ Error setting up list auto-sync: $e', isError: true);
+      _log('Error linking RxList with storage: $e', isError: true);
     }
   }
 
+  /// Safely convert stored data to the target type
+  T? _convertStoredData<T, S>(
+      dynamic storedData, T Function(S) fromJson, String key) {
+    if (storedData is S) {
+      // Direct compatible type
+      return fromJson(storedData);
+    } else if (storedData is String && S != String) {
+      // Try parsing as JSON
+      try {
+        final jsonData = json.decode(storedData);
+        if (jsonData is S) {
+          return fromJson(jsonData);
+        }
+      } catch (e) {
+        _log('Cannot parse JSON data for key=$key: $e', isError: true);
+      }
+    } else if (storedData is Map) {
+      // Handle Map type conversions (common case)
+      try {
+        return fromJson(storedData as S);
+      } catch (e) {
+        _log('Type conversion failed for key=$key: $e', isError: true);
+      }
+    }
+
+    throw FormatException('Cannot convert ${storedData.runtimeType} to $S');
+  }
+
+  /// Convert a stored list to a list of target type objects
+  List<T> _convertStoredList<T, S>(List sourceList, T Function(S) fromJson) {
+    return sourceList.map((item) {
+      if (item is S) {
+        return fromJson(item);
+      } else {
+        try {
+          return fromJson(item as S);
+        } catch (e) {
+          throw FormatException('Cannot convert ${item.runtimeType} to $S');
+        }
+      }
+    }).toList();
+  }
+
   //--------------------------------------------------------------------------
-  // LIST OPERATIONS (MANUAL METHODS)
+  // LIST OPERATIONS
   //--------------------------------------------------------------------------
 
   /// Save a list of objects to storage
   ///
-  /// * [key]: Storage key for the list
-  /// * [list]: List of items to save
-  /// * [toJson]: Function to convert each item to JSON format
-  Future<void> saveList<T>({
+  /// ```dart
+  /// await RxStorageUtils().saveList(
+  ///   key: 'contacts',
+  ///   list: contactsList,
+  ///   toJson: (contact) => contact.toJson(),
+  /// );
+  /// ```
+  Future<void> saveList<T, D>({
     required String key,
     required List<T> list,
-    required Map<String, dynamic> Function(T) toJson,
+    required D Function(T) toJson,
   }) async {
-    await _ensureConfigured();
+    await _ensureInitialized();
 
     try {
       if (list.isEmpty) {
-        await removeFromStorage(key);
-        _log('📝 Saved empty list (removed): key=$key');
+        await removeFromStorageInternal(key);
+        _log('Saved empty list (removed): key=$key');
         return;
       }
 
-      final List<Map<String, dynamic>> jsonList =
-          list.map((item) => toJson(item)).toList();
-      await writeToStorage(key, jsonList);
-      _log('📝 Saved list with ${list.length} items: key=$key');
+      final storableList = list.map((item) => toJson(item)).toList();
+      await writeToStorageInternal(key, storableList);
+      _log('Saved list with ${list.length} items: key=$key');
     } catch (e) {
-      _log('⚠️ Error saving list: $e', isError: true);
+      _log('Error saving list: $e', isError: true);
+      rethrow;
     }
   }
 
   /// Load a list of objects from storage
   ///
-  /// * [key]: Storage key for the list
-  /// * [fromJson]: Function to convert JSON to item type
-  /// * Returns: List of items (empty list if not found)
-  Future<List<T>> loadList<T>({
+  /// ```dart
+  /// final contacts = await RxStorageUtils().loadList(
+  ///   key: 'contacts',
+  ///   fromJson: Contact.fromJson,
+  /// );
+  /// ```
+  Future<List<T>> loadList<T, S>({
     required String key,
-    required T Function(Map<String, dynamic>) fromJson,
+    required T Function(S) fromJson,
   }) async {
     try {
-      final storedData = await readFromStorage(key);
+      final storedData = await readFromStorageInternal(key);
       if (storedData != null && storedData is List) {
-        final list = storedData
-            .map((item) => fromJson(item as Map<String, dynamic>))
-            .toList();
-        _log('📋 Loaded list with ${list.length} items: key=$key');
-        return list;
+        try {
+          return _convertStoredList<T, S>(storedData, fromJson);
+        } catch (e) {
+          _log('Error converting list items: $e', isError: true);
+        }
       }
     } catch (e) {
-      _log('⚠️ Error loading list: $e', isError: true);
+      _log('Error loading list: $e', isError: true);
     }
     return [];
   }
 
   /// Add an item to a stored list
-  ///
-  /// * [key]: Storage key for the list
-  /// * [item]: Item to add
-  /// * [fromJson]/[toJson]: Conversion functions
-  /// * Returns: true if successful
-  Future<bool> addItemToList<T>({
+  Future<bool> addItemToList<T, S, D>({
     required String key,
     required T item,
-    required Map<String, dynamic> Function(T) toJson,
-    required T Function(Map<String, dynamic>) fromJson,
+    required D Function(T) toJson,
+    required T Function(S) fromJson,
   }) async {
     try {
       List<T> existingList = await loadList(key: key, fromJson: fromJson);
       existingList.add(item);
       await saveList(key: key, list: existingList, toJson: toJson);
-      _log('➕ Added item to list (now ${existingList.length} items): key=$key');
+      _log('Added item to list (now ${existingList.length} items): key=$key');
       return true;
     } catch (e) {
-      _log('⚠️ Error adding item to list: $e', isError: true);
-      return false;
-    }
-  }
-
-  /// Remove an item from a stored list by index
-  ///
-  /// * [key]: Storage key for the list
-  /// * [index]: Position to remove (0-based)
-  /// * [fromJson]/[toJson]: Conversion functions
-  /// * Returns: true if successful
-  Future<bool> removeItemFromList<T>({
-    required String key,
-    required int index,
-    required T Function(Map<String, dynamic>) fromJson,
-    required Map<String, dynamic> Function(T) toJson,
-  }) async {
-    try {
-      List<T> existingList = await loadList(key: key, fromJson: fromJson);
-      if (index >= 0 && index < existingList.length) {
-        existingList.removeAt(index);
-        await saveList(key: key, list: existingList, toJson: toJson);
-        _log('➖ Removed item at index $index from list: key=$key');
-        return true;
-      } else {
-        _log(
-            '⚠️ Invalid index $index for list with ${existingList.length} items: key=$key',
-            isError: true);
-        return false;
-      }
-    } catch (e) {
-      _log('⚠️ Error removing item from list: $e', isError: true);
+      _log('Error adding item to list: $e', isError: true);
       return false;
     }
   }
 
   /// Update an item in a stored list by index
-  ///
-  /// * [key]: Storage key for the list
-  /// * [index]: Position to update (0-based)
-  /// * [updatedItem]: New item value
-  /// * [fromJson]/[toJson]: Conversion functions
-  /// * Returns: true if successful
-  Future<bool> updateItemInList<T>({
+  Future<bool> updateItemInList<T, S, D>({
     required String key,
     required int index,
     required T updatedItem,
-    required T Function(Map<String, dynamic>) fromJson,
-    required Map<String, dynamic> Function(T) toJson,
+    required T Function(S) fromJson,
+    required D Function(T) toJson,
   }) async {
     try {
       List<T> existingList = await loadList(key: key, fromJson: fromJson);
       if (index >= 0 && index < existingList.length) {
         existingList[index] = updatedItem;
         await saveList(key: key, list: existingList, toJson: toJson);
-        _log('✏️ Updated item at index $index in list: key=$key');
+        _log('Updated item at index $index in list: key=$key');
         return true;
       } else {
-        _log(
-            '⚠️ Invalid index $index for list with ${existingList.length} items: key=$key',
+        _log('Invalid index $index for list with ${existingList.length} items',
             isError: true);
         return false;
       }
     } catch (e) {
-      _log('⚠️ Error updating item in list: $e', isError: true);
+      _log('Error updating item in list: $e', isError: true);
+      return false;
+    }
+  }
+
+  /// Remove an item from a stored list by index
+  Future<bool> removeItemFromList<T, S, D>({
+    required String key,
+    required int index,
+    required T Function(S) fromJson,
+    required D Function(T) toJson,
+  }) async {
+    try {
+      List<T> existingList = await loadList(key: key, fromJson: fromJson);
+      if (index >= 0 && index < existingList.length) {
+        existingList.removeAt(index);
+        if (existingList.isEmpty) {
+          await removeFromStorageInternal(key);
+        } else {
+          await saveList(key: key, list: existingList, toJson: toJson);
+        }
+        _log('Removed item at index $index from list: key=$key');
+        return true;
+      } else {
+        _log('Invalid index $index for list with ${existingList.length} items',
+            isError: true);
+        return false;
+      }
+    } catch (e) {
+      _log('Error removing item from list: $e', isError: true);
       return false;
     }
   }
 
   //--------------------------------------------------------------------------
-  // SIMPLE TYPE-SAFE CONVENIENCE METHODS - INSTANCE METHODS
-  //--------------------------------------------------------------------------
-
-  /// Store a simple value (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.set(key, value)`
-  @Deprecated('Use StorageUtils.set(key, value) for static access')
-  Future<void> setValue<T>(String key, T value) async {
-    return await setValueInternal<T>(key, value);
-  }
-
-  /// Get a simple value with type safety (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.get<T>(key)`
-  @Deprecated('Use StorageUtils.get<T>(key) for static access')
-  Future<T?> getValue<T>(String key) async {
-    return await getValueInternal<T>(key);
-  }
-
-  /// Check if a key exists in storage (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.has(key)`
-  @Deprecated('Use StorageUtils.has(key) for static access')
-  Future<bool> hasKey(String key) async {
-    return await hasKeyInternal(key);
-  }
-
-  /// Store a value with an expiration time (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.setWithExpiry(key, value, expiration)`
-  @Deprecated(
-      'Use StorageUtils.setWithExpiry(key, value, expiration) for static access')
-  Future<void> setValueWithExpiration<T>(
-      String key, T value, Duration expiration) async {
-    return await setValueWithExpirationInternal<T>(key, value, expiration);
-  }
-
-  /// Get a value, respecting expiration if set (instance method)
-  /// Use the static version for direct access without instantiating:
-  /// `StorageUtils.getWithExpiry<T>(key)`
-  @Deprecated('Use StorageUtils.getWithExpiry<T>(key) for static access')
-  Future<T?> getValueWithExpiration<T>(String key) async {
-    return await getValueWithExpirationInternal<T>(key);
-  }
-
-  //--------------------------------------------------------------------------
-  // MANUAL SYNC METHODS
+  // MANUAL SYNCHRONIZATION
   //--------------------------------------------------------------------------
 
   /// Manually sync an Rx value to storage
-  ///
-  /// Useful for forcing an immediate update
-  Future<void> syncRxValueToStorage<T>({
+  Future<void> syncToStorage<T, D>({
     required String key,
     required T value,
-    required dynamic Function(T) toJson,
+    required D Function(T) toJson,
   }) async {
     try {
       if (value != null) {
-        await writeToStorage(key, toJson(value));
-        _log('🔄 Manually synced value to storage: key=$key');
+        await writeToStorageInternal(key, toJson(value));
+        _log('Manually synced value to storage: key=$key');
       } else {
-        await removeFromStorage(key);
-        _log('🔄 Manually removed value from storage: key=$key');
+        await removeFromStorageInternal(key);
+        _log('Manually removed value from storage: key=$key');
       }
     } catch (e) {
-      _log('⚠️ Error in manual sync: $e', isError: true);
+      _log('Error in manual sync: $e', isError: true);
+      rethrow;
     }
   }
 
   /// Manually sync an RxList to storage
-  ///
-  /// Useful for forcing an immediate update
-  Future<void> syncRxListToStorage<T>({
+  Future<void> syncListToStorage<T, D>({
     required String key,
     required List<T> list,
-    required Map<String, dynamic> Function(T) toJson,
+    required D Function(T) toJson,
   }) async {
     try {
       if (list.isNotEmpty) {
-        final List<Map<String, dynamic>> jsonList =
-            list.map((item) => toJson(item)).toList();
-        await writeToStorage(key, jsonList);
-        _log('🔄 Manually synced list with ${list.length} items: key=$key');
+        final storableList = list.map((item) => toJson(item)).toList();
+        await writeToStorageInternal(key, storableList);
+        _log('Manually synced list with ${list.length} items: key=$key');
       } else {
-        await removeFromStorage(key);
-        _log('🔄 Manually removed empty list from storage: key=$key');
+        await removeFromStorageInternal(key);
+        _log('Manually removed empty list from storage: key=$key');
       }
     } catch (e) {
-      _log('⚠️ Error in manual list sync: $e', isError: true);
+      _log('Error in manual list sync: $e', isError: true);
+      rethrow;
+    }
+  }
+
+  /// Update a value in an Rx variable and optionally sync to storage
+  Future<void> updateRx<T, D>({
+    required String key,
+    required Rx<T?> rxValue,
+    required T newValue,
+    required D Function(T) toJson,
+    bool syncToStorage = true,
+  }) async {
+    rxValue.value = newValue;
+    _log('Updated Rx value: key=$key');
+
+    if (syncToStorage) {
+      await this.syncToStorage(
+        key: key,
+        value: newValue,
+        toJson: toJson,
+      );
+    }
+  }
+
+  /// Update an item in an RxList and optionally sync to storage
+  Future<bool> updateRxListItem<T, D>({
+    required String key,
+    required RxList<T> rxList,
+    required int index,
+    required T newValue,
+    required D Function(T) toJson,
+    bool syncToStorage = true,
+  }) async {
+    if (index < 0 || index >= rxList.length) {
+      _log('Invalid index $index for list with ${rxList.length} items',
+          isError: true);
+      return false;
+    }
+
+    rxList[index] = newValue;
+    _log('Updated item at index $index in RxList: key=$key');
+
+    if (syncToStorage) {
+      await syncListToStorage(
+        key: key,
+        list: rxList,
+        toJson: toJson,
+      );
+    }
+
+    return true;
+  }
+
+  /// Add an item to an RxList and optionally sync to storage
+  Future<void> addRxListItem<T, D>({
+    required String key,
+    required RxList<T> rxList,
+    required T item,
+    required D Function(T) toJson,
+    bool syncToStorage = true,
+  }) async {
+    rxList.add(item);
+    _log('Added item to RxList (now ${rxList.length} items): key=$key');
+
+    if (syncToStorage) {
+      await syncListToStorage(
+        key: key,
+        list: rxList,
+        toJson: toJson,
+      );
+    }
+  }
+
+  /// Remove an item from an RxList and optionally sync to storage
+  Future<bool> removeRxListItem<T, D>({
+    required String key,
+    required RxList<T> rxList,
+    required int index,
+    required D Function(T) toJson,
+    bool syncToStorage = true,
+  }) async {
+    if (index < 0 || index >= rxList.length) {
+      _log('Invalid index $index for list with ${rxList.length} items',
+          isError: true);
+      return false;
+    }
+
+    rxList.removeAt(index);
+    _log('Removed item at index $index from RxList: key=$key');
+
+    if (syncToStorage) {
+      if (rxList.isEmpty) {
+        await removeFromStorageInternal(key);
+        _log('Removed empty list from storage: key=$key');
+      } else {
+        await syncListToStorage(
+          key: key,
+          list: rxList,
+          toJson: toJson,
+        );
+      }
+    }
+
+    return true;
+  }
+
+  //--------------------------------------------------------------------------
+  // CORE STORAGE OPERATIONS
+  //--------------------------------------------------------------------------
+
+  /// Read data from storage
+  Future<dynamic> readFromStorageInternal(String key) async {
+    await _ensureInitialized();
+
+    try {
+      final value = storage.read(key);
+      if (value == null) return null;
+
+      // Handle decryption if needed
+      if (_enableEncryption &&
+          value is String &&
+          value.startsWith('ENCRYPTED:')) {
+        final decrypted = _decrypt(value.substring(10)); // Remove prefix
+        return _safelyDecodeJson(decrypted, key);
+      }
+
+      // For non-encrypted values
+      return _safelyDecodeJson(value, key);
+    } catch (e) {
+      _log('Error reading from storage: $e', isError: true);
+      return null;
+    }
+  }
+
+  /// Write data to storage
+  Future<void> writeToStorageInternal(String key, dynamic data) async {
+    await _ensureInitialized();
+
+    try {
+      // Get old value before updating (for change notification)
+      final oldValue =
+          _notifyListeners ? await readFromStorageInternal(key) : null;
+
+      // Handle encryption if enabled
+      final valueToStore = (_enableEncryption && data != null)
+          ? 'ENCRYPTED:${_encrypt(data is String ? data : json.encode(data))}'
+          : data;
+
+      await storage.write(key, valueToStore);
+      _log('Saved data: key=$key');
+
+      // Notify listeners after successful write
+      if (_notifyListeners) {
+        _notifyListenersForKey(key, oldValue, data);
+      }
+    } catch (e) {
+      _log('Error writing to storage: $e', isError: true);
+      rethrow;
+    }
+  }
+
+  /// Remove data from storage
+  Future<void> removeFromStorageInternal(String key) async {
+    try {
+      // Get old value before removing (for change notification)
+      final oldValue =
+          _notifyListeners ? await readFromStorageInternal(key) : null;
+      await storage.remove(key);
+      _log('Removed data: key=$key');
+
+      // Notify listeners that the value was removed (is now null)
+      if (_notifyListeners) {
+        _notifyListenersForKey(key, oldValue, null);
+      }
+    } catch (e) {
+      _log('Error removing from storage: $e', isError: true);
+    }
+  }
+
+  /// Clear all stored data
+  Future<void> clearStorageInternal() async {
+    try {
+      // If notifications are enabled, capture all keys that have listeners
+      final keysWithListeners =
+          _notifyListeners ? _changeListeners.keys.toList() : <String>[];
+
+      // Get current values for those keys
+      final oldValues = <String, dynamic>{};
+      for (final key in keysWithListeners) {
+        oldValues[key] = await readFromStorageInternal(key);
+      }
+
+      // Clear the storage
+      await storage.erase();
+      _log('Cleared all storage data');
+
+      // Notify listeners for each key that had a value and a listener
+      if (_notifyListeners) {
+        for (final key in keysWithListeners) {
+          if (oldValues[key] != null) {
+            _notifyListenersForKey(key, oldValues[key], null);
+          }
+        }
+      }
+    } catch (e) {
+      _log('Error clearing storage: $e', isError: true);
+    }
+  }
+
+  /// Store a simple value (String, int, double, bool)
+  Future<void> setValueInternal<T>(String key, T value) async {
+    await _ensureInitialized();
+    await writeToStorageInternal(key, value);
+  }
+
+  /// Get a simple value with type safety
+  Future<T?> getValueInternal<T>(String key) async {
+    final value = await readFromStorageInternal(key);
+    if (value == null) return null;
+    if (value is T) return value;
+
+    _log('Type mismatch for key $key: expected $T, got ${value.runtimeType}',
+        isError: true);
+    return null;
+  }
+
+  /// Check if a key exists in storage
+  Future<bool> hasKeyInternal(String key) async {
+    return storage.hasData(key);
+  }
+
+  /// Store a value with an expiration time
+  Future<void> setValueWithExpirationInternal<T>(
+      String key, T value, Duration expiration) async {
+    final expirationTime =
+        DateTime.now().add(expiration).millisecondsSinceEpoch;
+    await writeToStorageInternal('${key}_expiration', expirationTime);
+    await setValueInternal(key, value);
+    _log(
+        'Stored value with ${expiration.inMinutes} minute expiration: key=$key');
+  }
+
+  /// Get a value, respecting expiration if set
+  Future<T?> getValueWithExpirationInternal<T>(String key) async {
+    final expirationKey = '${key}_expiration';
+    if (storage.hasData(expirationKey)) {
+      final expirationTime = await getValueInternal<int>(expirationKey);
+      if (expirationTime != null) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now > expirationTime) {
+          // Value has expired, remove both value and expiration
+          await removeFromStorageInternal(key);
+          await removeFromStorageInternal(expirationKey);
+          _log('Value expired: key=$key');
+          return null;
+        }
+      }
+    }
+    return await getValueInternal<T>(key);
+  }
+
+  /// Print all stored values for debugging purposes
+  Future<void> printAllStoredValuesInternal() async {
+    await _ensureInitialized();
+
+    try {
+      // Get all keys from storage
+      final keys = storage.getKeys();
+
+      if (keys.isEmpty) {
+        _log('Storage is empty. No values to print.');
+        return;
+      }
+
+      _log('Storage contains ${keys.length} keys:');
+      _log('======================================');
+
+      // Print each key-value pair
+      for (final key in keys) {
+        // Skip expiration keys for cleaner output
+        if (key.endsWith('_expiration')) continue;
+
+        var value = await readFromStorageInternal(key);
+        String valueType = value?.runtimeType.toString() ?? 'null';
+        String valuePreview;
+
+        if (value == null) {
+          valuePreview = 'null';
+        } else if (value is Map || value is List) {
+          // Format JSON objects for readability
+          valuePreview =
+              '${jsonEncode(value).substring(0, min(50, jsonEncode(value).length))}${jsonEncode(value).length > 50 ? '...' : ''}';
+        } else {
+          valuePreview = '$value';
+          if (valuePreview.length > 50) {
+            valuePreview = '${valuePreview.substring(0, 50)}...';
+          }
+        }
+
+        // Check for expiration
+        final expirationKey = '${key}_expiration';
+        String expirationInfo = '';
+        if (storage.hasData(expirationKey)) {
+          final expiryTimestamp = storage.read(expirationKey) as int?;
+          if (expiryTimestamp != null) {
+            final expiryDate =
+                DateTime.fromMillisecondsSinceEpoch(expiryTimestamp);
+            final now = DateTime.now();
+            if (expiryDate.isAfter(now)) {
+              final remaining = expiryDate.difference(now);
+              expirationInfo = ' (expires in ${_formatDuration(remaining)})';
+            } else {
+              expirationInfo = ' (EXPIRED)';
+            }
+          }
+        }
+
+        _log('🔑 $key:');
+        _log('   Type: $valueType$expirationInfo');
+        _log('   Value: $valuePreview');
+        _log('--------------------------------------');
+      }
+      _log('======================================');
+    } catch (e) {
+      _log('Error printing storage values: $e', isError: true);
     }
   }
 
@@ -845,13 +1147,13 @@ class RxStorageUtils {
 
       return utf8.decode(decrypted);
     } catch (e) {
-      _log('⚠️ Decryption error: $e', isError: true);
+      _log('Decryption error: $e', isError: true);
       return text;
     }
   }
 
   /// Internal method to handle unexpected data formats
-  dynamic _safelyDecodeJsonData(dynamic data, String key) {
+  dynamic _safelyDecodeJson(dynamic data, String key) {
     if (data == null) return null;
 
     try {
@@ -864,248 +1166,22 @@ class RxStorageUtils {
       }
       return data;
     } catch (e) {
-      _log('⚠️ Error decoding JSON for key=$key: $e', isError: true);
+      _log('Error decoding JSON for key=$key: $e', isError: true);
       return data; // Return original data if parsing fails
     }
   }
 
-  //--------------------------------------------------------------------------
-  // STATIC FAÇADE METHODS (DIRECT ACCESS WITHOUT INSTANTIATION)
-  //--------------------------------------------------------------------------
-
-  /// Static method to print all stored values
-  static Future<void> printAll() async {
-    return await _instance.printAllStoredValuesInternal();
+  /// Get count of listeners for a specific key (useful for testing)
+  int getListenerCount(String key) {
+    return _changeListeners[key]?.length ?? 0;
   }
 
-  /// Static method to read values from storage
-  static Future<dynamic> read(String key) async {
-    return await _instance.readFromStorageInternal(key);
-  }
-
-  /// Static method to write values to storage
-  static Future<void> write(String key, dynamic data) async {
-    return await _instance.writeToStorageInternal(key, data);
-  }
-
-  /// Static method to remove values from storage
-  static Future<void> remove(String key) async {
-    return await _instance.removeFromStorageInternal(key);
-  }
-
-  /// Static method to clear storage
-  static Future<void> clear() async {
-    return await _instance.clearStorageInternal();
-  }
-
-  /// Static method to set a value
-  static Future<void> set<T>(String key, T value) async {
-    return await _instance.setValueInternal<T>(key, value);
-  }
-
-  /// Static method to get a value
-  static Future<T?> get<T>(String key) async {
-    return await _instance.getValueInternal<T>(key);
-  }
-
-  /// Static method to check if key exists
-  static Future<bool> has(String key) async {
-    return await _instance.hasKeyInternal(key);
-  }
-
-  /// Static method to set value with expiration
-  static Future<void> setWithExpiry<T>(
-      String key, T value, Duration expiration) async {
-    return await _instance.setValueWithExpirationInternal<T>(
-        key, value, expiration);
-  }
-
-  /// Static method to get value with expiration
-  static Future<T?> getWithExpiry<T>(String key) async {
-    return await _instance.getValueWithExpirationInternal<T>(key);
-  }
-
-  //--------------------------------------------------------------------------
-  // INTERNAL IMPLEMENTATION METHODS
-  //--------------------------------------------------------------------------
-
-  /// Read data from storage by key (internal implementation)
-  Future<dynamic> readFromStorageInternal(String key) async {
-    await _ensureConfigured();
-
-    try {
-      final value = storage.read(key);
-      if (value == null) return null;
-
-      // Handle decryption if needed
-      if (_enableEncryption &&
-          value is String &&
-          value.startsWith('ENCRYPTED:')) {
-        final decrypted = _decrypt(value.substring(10)); // Remove prefix
-        return _safelyDecodeJsonData(decrypted, key);
-      }
-
-      // For non-encrypted values
-      return _safelyDecodeJsonData(value, key);
-    } catch (e) {
-      _log('⚠️ Error reading from storage: $e', isError: true);
-      return null;
+  /// Get total count of registered listeners (useful for testing)
+  int get totalListenerCount {
+    int count = 0;
+    for (final listeners in _changeListeners.values) {
+      count += listeners.length;
     }
-  }
-
-  /// Write data to storage with key (internal implementation)
-  Future<void> writeToStorageInternal(String key, dynamic data) async {
-    await _ensureConfigured();
-
-    try {
-      // Handle encryption if needed
-      final valueToStore = (_enableEncryption && data != null)
-          ? 'ENCRYPTED:${_encrypt(data is String ? data : json.encode(data))}'
-          : data;
-
-      await storage.write(key, valueToStore);
-      _log('📝 Saved data: key=$key');
-    } catch (e) {
-      _log('⚠️ Error writing to storage: $e', isError: true);
-    }
-  }
-
-  /// Delete a value from storage (internal implementation)
-  Future<void> removeFromStorageInternal(String key) async {
-    try {
-      await storage.remove(key);
-      _log('🗑️ Removed data: key=$key');
-    } catch (e) {
-      _log('⚠️ Error removing from storage: $e', isError: true);
-    }
-  }
-
-  /// Clear all stored data (internal implementation)
-  Future<void> clearStorageInternal() async {
-    try {
-      await storage.erase();
-      _log('🧹 Cleared all storage data');
-    } catch (e) {
-      _log('⚠️ Error clearing storage: $e', isError: true);
-    }
-  }
-
-  /// Store a simple value (String, int, double, bool) (internal implementation)
-  Future<void> setValueInternal<T>(String key, T value) async {
-    await _ensureConfigured();
-    await writeToStorageInternal(key, value);
-  }
-
-  /// Get a simple value with type safety (internal implementation)
-  Future<T?> getValueInternal<T>(String key) async {
-    final value = await readFromStorageInternal(key);
-    if (value == null) return null;
-    if (value is T) return value;
-
-    _log('⚠️ Type mismatch for key $key: expected $T, got ${value.runtimeType}',
-        isError: true);
-    return null;
-  }
-
-  /// Check if a key exists in storage (internal implementation)
-  Future<bool> hasKeyInternal(String key) async {
-    return storage.hasData(key);
-  }
-
-  /// Store a value with an expiration time (internal implementation)
-  Future<void> setValueWithExpirationInternal<T>(
-      String key, T value, Duration expiration) async {
-    final expirationTime =
-        DateTime.now().add(expiration).millisecondsSinceEpoch;
-    await writeToStorageInternal('${key}_expiration', expirationTime);
-    await setValueInternal(key, value);
-    _log(
-        '⏱️ Stored value with ${expiration.inMinutes} minute expiration: key=$key');
-  }
-
-  /// Get a value, respecting expiration if set (internal implementation)
-  Future<T?> getValueWithExpirationInternal<T>(String key) async {
-    final expirationKey = '${key}_expiration';
-    if (storage.hasData(expirationKey)) {
-      final expirationTime = await getValueInternal<int>(expirationKey);
-      if (expirationTime != null) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (now > expirationTime) {
-          // Value has expired, remove both value and expiration
-          await removeFromStorageInternal(key);
-          await removeFromStorageInternal(expirationKey);
-          _log('⏱️ Value expired: key=$key');
-          return null;
-        }
-      }
-    }
-    return await getValueInternal<T>(key);
-  }
-
-  /// Print all stored values for debugging purposes (internal implementation)
-  Future<void> printAllStoredValuesInternal() async {
-    await _ensureConfigured();
-
-    try {
-      // Get all keys from storage
-      final keys = storage.getKeys();
-
-      if (keys.isEmpty) {
-        _log('📦 Storage is empty. No values to print.');
-        return;
-      }
-
-      _log('📦 Storage contains ${keys.length} keys:');
-      _log('======================================');
-
-      // Print each key-value pair
-      for (final key in keys) {
-        // Skip expiration keys for cleaner output
-        if (key.endsWith('_expiration')) continue;
-
-        var value = await readFromStorageInternal(key);
-        String valueType = value?.runtimeType.toString() ?? 'null';
-        String valuePreview;
-
-        if (value == null) {
-          valuePreview = 'null';
-        } else if (value is Map || value is List) {
-          // Format JSON objects for readability
-          valuePreview =
-              '${jsonEncode(value).substring(0, min(50, jsonEncode(value).length))}${jsonEncode(value).length > 50 ? '...' : ''}';
-        } else {
-          valuePreview = '$value';
-          if (valuePreview.length > 50) {
-            valuePreview = '${valuePreview.substring(0, 50)}...';
-          }
-        }
-
-        // Check for expiration
-        final expirationKey = '${key}_expiration';
-        String expirationInfo = '';
-        if (storage.hasData(expirationKey)) {
-          final expiryTimestamp = storage.read(expirationKey) as int?;
-          if (expiryTimestamp != null) {
-            final expiryDate =
-                DateTime.fromMillisecondsSinceEpoch(expiryTimestamp);
-            final now = DateTime.now();
-            if (expiryDate.isAfter(now)) {
-              final remaining = expiryDate.difference(now);
-              expirationInfo = ' (expires in ${_formatDuration(remaining)})';
-            } else {
-              expirationInfo = ' (EXPIRED)';
-            }
-          }
-        }
-
-        _log('🔑 $key:');
-        _log('   Type: $valueType$expirationInfo');
-        _log('   Value: $valuePreview');
-        _log('--------------------------------------');
-      }
-      _log('======================================');
-    } catch (e) {
-      _log('⚠️ Error printing storage values: $e', isError: true);
-    }
+    return count;
   }
 }
