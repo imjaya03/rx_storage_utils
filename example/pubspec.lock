@@ -121,7 +121,7 @@ packages:
     source: hosted
     version: "4.7.2"
   get_storage:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: get_storage
       sha256: "39db1fffe779d0c22b3a744376e86febe4ade43bf65e06eab5af707dc84185a2"
@@ -294,7 +294,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.0.0"
+    version: "1.0.1"
   shared_preferences:
     dependency: "direct main"
     description:

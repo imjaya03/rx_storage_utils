@@ -1,57 +1,60 @@
-# rx_storage_utils
-
-A powerful Flutter utility package for seamless persistent storage with reactive (Rx) variable integration.
+# RxStorageUtils
 
 [![pub package](https://img.shields.io/pub/v/rx_storage_utils.svg)](https://pub.dev/packages/rx_storage_utils)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Flutter](https://img.shields.io/badge/Platform-Flutter-02569B?logo=flutter)](https://flutter.dev)
+
+A powerful Flutter utility that seamlessly binds GetX reactive state with persistent storage, ensuring your UI state and device storage remain perfectly synchronized.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Getting Started](#getting-started)
+  - [Initialization](#initialization)
+  - [Basic Usage](#basic-usage)
+- [API Reference](#api-reference)
+- [Advanced Examples](#advanced-examples)
+- [Best Practices](#best-practices)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- 🔄 **Reactive Storage**: Two-way synchronization between Rx variables and persistent storage
-- 🔒 **Optional Encryption**: Built-in protection for sensitive data
-- 📋 **Type-Safe**: Generic methods for storing primitive types and complex objects
-- ⏱️ **Expiring Data**: Set expiration times for temporary values
-- 📱 **Simple API**: Intuitive methods for common storage operations
-- 🔍 **Debugging**: Tools to inspect stored values during development
+- 🔄 **Reactive State Binding** - Automatically sync GetX reactive variables with persistent storage
+- 📦 **Type-Safe Storage** - Strongly typed data persistence with custom converters
+- 📋 **List Support** - Special handling for reactive lists
+- 🔒 **Update Protection** - Prevents infinite update loops with intelligent locking
+- 🐞 **Debug Mode** - Detailed logging and performance tracking for troubleshooting
+- ⚡ **Performance Optimization** - Minimizes storage writes by tracking actual changes
 
 ## Installation
 
-Add `rx_storage_utils` to your `pubspec.yaml`:
+Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  rx_storage_utils:
-    git:
-      url: https://github.com/imjaya03/rx_storage_utils.git
-```
-
-Then run:
-
-```bash
-flutter pub get
+  rx_storage_utils: ^1.0.0
+  get: ^4.6.5
+  get_storage: ^2.1.1
 ```
 
 ## Getting Started
 
-### Initialize Storage
+### Initialization
 
-Initialize the storage system in your app's startup code:
+Initialize the storage system in your app's `main()` method:
 
 ```dart
 import 'package:rx_storage_utils/rx_storage_utils.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() async {
+  // Initialize storage before runApp
+  await RxStorageUtils.initStorage();
 
-  // Initialize with default settings
-  await StorageUtils.init();
-
-  // Or with custom settings
-  await StorageUtils.init(
-    enableLogging: true,
-    enableEncryption: true,
-    customEncryptionKey: 'your-secure-key', // Optional
-  );
+  // Enable debug mode during development
+  RxStorageUtils.setDebugMode(true, trackTiming: true);
 
   runApp(MyApp());
 }
@@ -59,220 +62,161 @@ Future<void> main() async {
 
 ### Basic Usage
 
-#### Store and Retrieve Simple Values
-
-```dart
-// Store values
-await StorageUtils().setValue('username', 'JohnDoe');
-await StorageUtils().setValue('age', 25);
-await StorageUtils().setValue('isLoggedIn', true);
-await StorageUtils().setValue('score', 95.5);
-
-// Retrieve values (with type safety)
-String? username = await StorageUtils().getValue<String>('username');
-int? age = await StorageUtils().getValue<int>('age');
-bool? isLoggedIn = await StorageUtils().getValue<bool>('isLoggedIn');
-double? score = await StorageUtils().getValue<double>('score');
-```
-
-#### Store and Retrieve JSON Objects
-
-```dart
-// Store an object
-final user = User(id: 1, name: 'John Doe', email: 'john@example.com');
-await StorageUtils().writeToStorage('currentUser', user.toJson());
-
-// Retrieve an object
-final userData = await StorageUtils().readFromStorage('currentUser');
-if (userData != null) {
-  final user = User.fromJson(userData);
-  print('User: ${user.name}');
-}
-```
-
-### Reactive Storage with Automatic Synchronization
-
-#### Link a Single Object to Storage
+#### Binding a Simple Reactive Value
 
 ```dart
 // Create a reactive variable
-final Rx<UserProfile?> userProfileRx = Rx<UserProfile?>(null);
+final RxString username = ''.obs;
 
-// Link it to persistent storage
-await StorageUtils().initializeStorageWithListener<UserProfile>(
-  key: 'userProfile',
-  rxValue: userProfileRx,
-  fromJson: UserProfile.fromJson,
-  toJson: (profile) => profile.toJson(),
-  onInitialValue: (profile) {
-    print('Loaded profile for: ${profile.username}');
-  },
+// Bind it to persistent storage
+await RxStorageUtils.bindReactiveValue<String>(
+  key: 'username',
+  rxValue: username,
+  onUpdate: (data) => print('Username updated: $data'),
+  onInitialLoadFromDb: (data) => print('Username loaded: $data'),
+  toRawData: (data) => data, // String can be stored directly
+  fromRawData: (data) => data.toString(),
+  autoSync: true, // automatically sync changes to storage
 );
 
-// Now any changes to userProfileRx will automatically save to storage!
-userProfileRx.value = UserProfile(username: 'jane_doe', email: 'jane@example.com');
-
-// And when your app restarts, the value will be loaded automatically
+// Use the reactive value normally in your UI
+// Any changes will be automatically persisted
+username.value = 'JohnDoe';
 ```
 
-#### Link a List to Storage
-
-```dart
-// Create a reactive list
-final RxList<Task> tasksRx = <Task>[].obs;
-
-// Link it to persistent storage
-await StorageUtils().initializeListStorageWithListener<Task>(
-  key: 'tasks',
-  rxList: tasksRx,
-  fromJson: Task.fromJson,
-  toJson: (task) => task.toJson(),
-);
-
-// Now any changes to the list will persist automatically!
-tasksRx.add(Task(id: 1, title: 'Buy groceries'));
-tasksRx.add(Task(id: 2, title: 'Write report'));
-
-// Items can be removed, replaced, etc., and storage stays in sync
-tasksRx.removeAt(0);
-```
-
-### Working with Lists Manually
-
-If you prefer to manage storage timing manually:
-
-```dart
-// Save a list
-final taskList = [Task(id: 1, title: 'First task'), Task(id: 2, title: 'Second task')];
-await StorageUtils().saveList(
-  key: 'tasks',
-  list: taskList,
-  toJson: (task) => task.toJson(),
-);
-
-// Load a list
-final loadedTasks = await StorageUtils().loadList<Task>(
-  key: 'tasks',
-  fromJson: Task.fromJson,
-);
-
-// Add an item to a stored list
-await StorageUtils().addItemToList<Task>(
-  key: 'tasks',
-  item: Task(id: 3, title: 'New task'),
-  toJson: (task) => task.toJson(),
-  fromJson: Task.fromJson,
-);
-
-// Update an item by index
-await StorageUtils().updateItemInList<Task>(
-  key: 'tasks',
-  index: 0,
-  updatedItem: Task(id: 1, title: 'Updated task'),
-  toJson: (task) => task.toJson(),
-  fromJson: Task.fromJson,
-);
-
-// Remove an item by index
-await StorageUtils().removeItemFromList<Task>(
-  key: 'tasks',
-  index: 1,
-  toJson: (task) => task.toJson(),
-  fromJson: Task.fromJson,
-);
-```
-
-### Expiring Data
-
-Store values that automatically expire after a specified duration:
-
-```dart
-// Store a temporary authentication token
-await StorageUtils().setValueWithExpiration<String>(
-  'authToken',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-  Duration(hours: 1), // Expires after 1 hour
-);
-
-// Retrieve the value (returns null if expired)
-String? token = await StorageUtils().getValueWithExpiration<String>('authToken');
-```
-
-### Debugging Tools
-
-Print all stored values for debugging:
-
-```dart
-// In your debug/development code
-await StorageUtils().printAllStoredValues();
-```
-
-## Advanced Usage
-
-### Manual Synchronization
-
-Force a sync from memory to storage:
-
-```dart
-// For single objects
-await StorageUtils().syncRxValueToStorage<UserProfile>(
-  key: 'userProfile',
-  value: userProfileRx.value,
-  toJson: (profile) => profile.toJson(),
-);
-
-// For lists
-await StorageUtils().syncRxListToStorage<Task>(
-  key: 'tasks',
-  list: tasksRx,
-  toJson: (task) => task.toJson(),
-);
-```
-
-### Storage Management
-
-Check, remove, and clear storage:
-
-```dart
-// Check if a key exists
-bool exists = await StorageUtils().hasKey('username');
-
-// Remove a specific value
-await StorageUtils().removeFromStorage('username');
-
-// Clear all stored data
-await StorageUtils().clearStorage();
-```
-
-## Models Example
-
-Example of model classes for use with rx_storage_utils:
+#### Binding Complex Objects
 
 ```dart
 class User {
-  final int id;
   final String name;
-  final String email;
+  final int age;
 
-  User({required this.id, required this.name, required this.email});
+  User({required this.name, required this.age});
 
+  // Convert to JSON
   Map<String, dynamic> toJson() => {
-    'id': id,
     'name': name,
-    'email': email,
+    'age': age,
   };
 
+  // Create from JSON
   factory User.fromJson(Map<String, dynamic> json) => User(
-    id: json['id'],
-    name: json['name'],
-    email: json['email'],
+    name: json['name'] ?? '',
+    age: json['age'] ?? 0,
   );
 }
 
+// Create a reactive user
+final Rx<User> currentUser = User(name: '', age: 0).obs;
+
+// Bind to storage with converters
+await RxStorageUtils.bindReactiveValue<User>(
+  key: 'current_user',
+  rxValue: currentUser,
+  onUpdate: (data) => print('User updated'),
+  onInitialLoadFromDb: (data) => print('User loaded'),
+  toRawData: (data) => data.toJson(), // Convert to storable format
+  fromRawData: (data) => User.fromJson(data), // Convert back to User
+);
+```
+
+#### Binding Lists
+
+```dart
+// Create a reactive list of strings
+final RxList<String> todoItems = <String>[].obs;
+
+// Bind the list to storage
+await RxStorageUtils.bindReactiveListValue<String>(
+  key: 'todo_items',
+  rxList: todoItems,
+  onUpdate: (data) => print('Todo list updated'),
+  onInitialLoadFromDb: (data) => print('Todo list loaded with ${data?.length} items'),
+  itemToRawData: (item) => item, // String items can be stored directly
+  itemFromRawData: (data) => data.toString(),
+);
+
+// Use the list normally - changes are automatically persisted
+todoItems.add('Buy groceries');
+todoItems.add('Walk the dog');
+```
+
+## API Reference
+
+### Initialization
+
+```dart
+// Initialize storage
+static Future<void> initStorage() async
+
+// Enable or disable debug mode
+static void setDebugMode(bool enabled, {bool trackTiming = false})
+```
+
+### Binding Reactive Values
+
+```dart
+static Future<void> bindReactiveValue<T>({
+  required String key,
+  required Rx<T> rxValue,
+  required Function(T? data) onUpdate,
+  required Function(T? data) onInitialLoadFromDb,
+  required dynamic Function(T data) toRawData,
+  required T Function(dynamic data) fromRawData,
+  bool autoSync = true,
+})
+```
+
+### Binding Reactive Lists
+
+```dart
+static Future<void> bindReactiveListValue<T>({
+  required String key,
+  required RxList<T> rxList,
+  required Function(List<T>? data) onUpdate,
+  required Function(List<T>? data) onInitialLoadFromDb,
+  required dynamic Function(T item) itemToRawData,
+  required T Function(dynamic data) itemFromRawData,
+  bool autoSync = true,
+})
+```
+
+### Direct Storage Access
+
+```dart
+// Get a value without reactive binding
+static T? getValue<T>({
+  required String key,
+  required T Function(dynamic data) fromRawData,
+  T? defaultValue,
+})
+
+// Set a value without reactive binding
+static Future<bool> setValue<T>({
+  required String key,
+  required T value,
+  required dynamic Function(T data) toRawData,
+})
+
+// Check if a key exists
+static bool hasKey(String key)
+
+// Clear a specific key
+static Future<void> clearKey(String key)
+
+// Clear all storage
+static Future<void> clearAll()
+```
+
+## Advanced Examples
+
+### Custom Objects with List Binding
+
+```dart
 class Task {
-  final int id;
+  final String id;
   final String title;
-  bool completed;
+  final bool completed;
 
   Task({required this.id, required this.title, this.completed = false});
 
@@ -283,66 +227,51 @@ class Task {
   };
 
   factory Task.fromJson(Map<String, dynamic> json) => Task(
-    id: json['id'],
-    title: json['title'],
+    id: json['id'] ?? '',
+    title: json['title'] ?? '',
     completed: json['completed'] ?? false,
   );
 }
-```
 
-## Theme and Dark Mode Compatibility
+// Reactive list of Task objects
+final RxList<Task> tasks = <Task>[].obs;
 
-rx_storage_utils works seamlessly with theme changes, including dark mode. Here's an example of storing theme preferences:
-
-```dart
-// Create a reactive variable for theme mode
-final Rx<ThemeMode> themeModeRx = Rx<ThemeMode>(ThemeMode.system);
-
-// Link it to storage
-await StorageUtils().initializeStorageWithListener<ThemeMode>(
-  key: 'themeMode',
-  rxValue: themeModeRx,
-  fromJson: (data) => ThemeMode.values[data as int],
-  toJson: (mode) => mode.index,
+// Bind to storage
+await RxStorageUtils.bindReactiveListValue<Task>(
+  key: 'tasks',
+  rxList: tasks,
+  onUpdate: (data) => updateUI(),
+  onInitialLoadFromDb: (data) => initializeUI(),
+  itemToRawData: (task) => task.toJson(),
+  itemFromRawData: (data) => Task.fromJson(data),
 );
-
-// In your MaterialApp
-MaterialApp(
-  theme: ThemeData.light(),
-  darkTheme: ThemeData.dark(),
-  themeMode: themeModeRx.value,
-  // ...
-)
-
-// Change theme and it's automatically persisted
-void toggleTheme() {
-  themeModeRx.value = themeModeRx.value == ThemeMode.dark
-    ? ThemeMode.light
-    : ThemeMode.dark;
-}
 ```
 
-## Security Notes
+## Best Practices
 
-- When `enableEncryption` is true, data is encrypted before storage
-- For highly sensitive data, consider using dedicated security packages
-- The default encryption is suitable for most applications but may not meet specific regulatory requirements
+1. **Initialize Early**: Call `initStorage()` before your app rendering starts
+2. **Use Strong Types**: Always use properly typed converters (toRawData/fromRawData)
+3. **Error Handling**: Add try/catch blocks in your converters for resilience
+4. **Debug First**: Enable debug mode during development with `setDebugMode(true)`
+5. **Key Naming**: Use consistent, descriptive key names with potential for namespacing
+6. **Minimal Updates**: Only modify the values that actually change to minimize storage writes
 
-## Dependencies
+## Troubleshooting
 
-This package is built on top of:
-
-- [get](https://pub.dev/packages/get) - For reactive state management
-- [get_storage](https://pub.dev/packages/get_storage) - For persistent storage
-- [crypto](https://pub.dev/packages/crypto) - For encryption support
-- [package_info_plus](https://pub.dev/packages/package_info_plus) - For auto-generating secure keys
+- If you experience update loops, check your `onUpdate` handlers for code that might modify the same value
+- For slow performance, consider using `trackTiming: true` to identify bottlenecks
+- Clear problematic keys using `clearKey()` if data becomes corrupted
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-# rx_storage_utils
+This project is licensed under the MIT License - see the LICENSE file for details
