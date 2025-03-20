@@ -76,6 +76,7 @@ await RxStorageUtils.bindReactiveValue<String>(
   onInitialLoadFromDb: (data) => print('Username loaded: $data'),
   toRawData: (data) => data, // String can be stored directly
   fromRawData: (data) => data.toString(),
+  defaultValue: 'Guest', // Provides a default value if key doesn't exist
   autoSync: true, // automatically sync changes to storage
 );
 
@@ -163,6 +164,7 @@ static Future<void> bindReactiveValue<T>({
   required Function(T? data) onInitialLoadFromDb,
   required dynamic Function(T data) toRawData,
   required T Function(dynamic data) fromRawData,
+  T? defaultValue, // Optional default value when key doesn't exist
   bool autoSync = true,
 })
 ```
@@ -177,6 +179,7 @@ static Future<void> bindReactiveListValue<T>({
   required Function(List<T>? data) onInitialLoadFromDb,
   required dynamic Function(T item) itemToRawData,
   required T Function(dynamic data) itemFromRawData,
+  List<T>? defaultValue, // Optional default list when key doesn't exist
   bool autoSync = true,
 })
 ```
@@ -251,13 +254,16 @@ await RxStorageUtils.bindReactiveListValue<Task>(
 
 1. **Initialize Early**: Call `initStorage()` before your app rendering starts
 2. **Use Strong Types**: Always use properly typed converters (toRawData/fromRawData)
-3. **Error Handling**: Add try/catch blocks in your converters for resilience
-4. **Debug First**: Enable debug mode during development with `setDebugMode(true)`
-5. **Key Naming**: Use consistent, descriptive key names with potential for namespacing
-6. **Minimal Updates**: Only modify the values that actually change to minimize storage writes
+3. **Handle Null Values**: Always check for null in onInitialLoadFromDb, especially on first run
+4. **Use Default Values**: Provide defaultValue parameter for a better first-run experience
+5. **Error Handling**: Add try/catch blocks in your converters for resilience
+6. **Debug First**: Enable debug mode during development with `setDebugMode(true)`
+7. **Key Naming**: Use consistent, descriptive key names with potential for namespacing
+8. **Minimal Updates**: Only modify the values that actually change to minimize storage writes
 
 ## Troubleshooting
 
+- **Null Values**: If onInitialLoadFromDb receives null, the key likely doesn't exist yet. Use defaultValue or handle null appropriately.
 - If you experience update loops, check your `onUpdate` handlers for code that might modify the same value
 - For slow performance, consider using `trackTiming: true` to identify bottlenecks
 - Clear problematic keys using `clearKey()` if data becomes corrupted

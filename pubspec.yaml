@@ -1,6 +1,6 @@
 name: rx_storage_utils
 description: A Flutter package for efficient local storage utilities.
-version: 1.0.2
+version: 1.0.3
 repository: https://github.com/imjaya03/rx_storage_utils
 homepage: https://github.com/imjaya03/rx_storage_utils
 # issue_tracker: https://github.com/yourusername/rx_storage_utils/issues
